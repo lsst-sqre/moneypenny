@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "http://example.com/example.json",
+  "type": "object",
+  "title": "The root schema",
+  "description": "The root schema comprises the entire JSON document.",
+  "default": {},
+  "examples": [
+    {
+      "username": "jb007",
+      "uidNumber": 1007,
+      "isMemberOf": [
+	{
+	  "name": "doubleos",
+	  "id": 500
+	},
+	{
+	  "name": "staff",
+	  "id": 200
+	}
+      ]
+    }
+  ],
+  "required": [
+    "username",
+    "uidNumber",
+    "isMemberOf"
+  ],
+  "properties": {
+    "name": {
+      "$id": "#/properties/username",
+      "type": "string",
+      "title": "The username of the requesting user",
+      "description": "username (with respect to auth system)",
+      "examples": [
+        "jb007"
+            ]
+    },
+    "uidNumber": {
+      "$id": "#/properties/uidNumber",
+      "type": "integer",
+      "title": "Numeric UID of user",
+      "minimum": 1
+    },
+    "isMemberOf": {
+      "$id": "#/properties/isMemberOf",
+      "type": "array",
+      "title": "List of group/GID pairs."
+    }
+  },
+  "additionalProperties": false
+}

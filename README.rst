@@ -1,0 +1,37 @@
+##########
+Moneypenny
+##########
+
+Moneypenny is an administrative service to provide various provisioning
+tasks when users are added to, or removed from, a Rubin Science Platform
+instance.  It is derived from ``cachemachine``.
+
+
+Theory of Operation
+===================
+
+Moneypenny presents a standard REST-ful HTTP API with JSON bodies for
+individual messages.
+
+A new user provisioning process is created by POSTing a JSON message to
+the /moneypenny endpoint.  The schema is detailed in the
+src/moneypenny/schemas directory.
+
+In short, each POST encodes a resource with a username, a UID, and a set
+of groupnames mapped to GIDs.  This is used to:
+
+* Create a user home directory.
+* We anticipate that a user directory will eventually be able to be
+  removed by sending an HTTP DELETE to /moneypenny/usernamename.
+
+Getting Started
+===============
+
+To start working on this codebase, make a virtualenv and install the
+requirements using the Makefile provided by the safir framework.  You
+can also use the helper script iterate.sh to rebuild and redeploy your
+most recent changes to a minikube environment.
+
+Moneypenny is developed with the `Safir <https://safir.lsst.io>`__ framework.
+`Get started with development with the tutorial
+ <https://safir.lsst.io/set-up-from-template.html>`__.
