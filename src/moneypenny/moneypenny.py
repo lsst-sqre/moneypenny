@@ -5,32 +5,30 @@ __all__ = [
 ]
 
 import asyncio
-
-from aiohttp import web
-from aiojobs import create_scheduler
-from aiojobs._job import Job
-
-from typing import List, Dict, Any
-
+import datetime
 import json
 import random
+from typing import Any, Dict, List
+
 import structlog
+import yaml
+from aiohttp import web
+from aiojobs import create_scheduler
 
 from .config import Configuration
+from .errors import (
+    CatGotYourTongueError,
+    NoMrBondIExpectYouToDie,
+    NonsensicalOrderError,
+)
 from .kubernetes import KubernetesClient
 from .singleton import Singleton
-from .types import CatGotYourTongueError, NonsensicalOrderError
-
-# These should be supplied as ConfigMaps
-M="/opt/lsst/software/moneypenny/config/m.yaml"
-QUIPS="/opt/lsst/software/moneypenny/config/quips.txt"
 
 logger = structlog.get_logger(__name__)
 
 
 class Moneypenny(metaclass=Singleton):
-    """Moneypenny is unique.
-    """
+    """Moneypenny is unique."""
 
     async def init(self, app: web.Application) -> None:
         """Only called from the aiohttp startup hook.
@@ -39,14 +37,15 @@ class Moneypenny(metaclass=Singleton):
         ----------
         app: unused.  Associated application instance.
         """
-        
-        self.k8s_client = KubernetesClient()
+
+        self.config = Configuration()
+        self.k8s_client = KubernetesClient(moneypenny=self)
         self._scheduler = await create_scheduler()
-        self.orders = {}
-        self.quips = []
+        self.orders: Dict[str, Any] = {}
+        self.quips = List[str]
         await self._read_orders()
         await self._load_quips()
-        
+
     async def cleanup(self, app: web.Application) -> None:
         """Clean up on exit.
 
@@ -60,7 +59,7 @@ class Moneypenny(metaclass=Singleton):
         app: unused.  Associated application instance."""
         await self._scheduler.close()
 
-    async def _load_quips(self, quipfile:str = QUIPS) -> None:
+    async def _load_quips(self) -> None:
         """Re-read quips file.  This is in fortune format, which is to
         say, blocks of text separated by lines consisting only of '%'.
 
@@ -68,31 +67,31 @@ class Moneypenny(metaclass=Singleton):
         '#' as comment lines.  We also throw away empty quips, so if your
         quipfile starts or ends with '%' it doesn't matter.
         """
-        quips = [""]
-        q_idx = 0
-        with open(quipfile,"r") as f:
-            for l in f:
-                if l.startswith("#"):
+        q_idx: int = 0
+        quips: List[str] = [""]
+        with open(self.config.quips, "r") as f:
+            for line in f:
+                if line.startswith("#"):
                     continue
-                if l.rstrip() == '%':
+                if line.rstrip() == "%":
+                    quips.append("")
                     q_idx += 1
-                    quips[q_idx] = ""
                     continue
-                quips[q_idx] += l
-        self.quips = [ x for x in quips if x ]
+                quips[q_idx] += line
+        self.quips = [x for x in quips if x]  # type: ignore
 
     async def quip(self) -> str:
-        """Return one of our quips at random.
-        """
+        """Return one of our quips at random."""
         # We reload quips each time; changing the configmap under a running
         #  instance is allowed.
         await self._load_quips()
         try:
-            return random.choice(self.quips) # We need at least one quip
+            return random.choice(self.quips)  # type: ignore
+            # We need at least one quip
         except IndexError:
             raise CatGotYourTongueError()
 
-    async def _read_orders(self, orderfile:str = M) -> None:
+    async def _read_orders(self) -> None:
         """Read orders from M.  The orders will be in YAML, in the form of a
         dict, where the key is a string corresponding to the HTTP
         verb, lowercased.  Initially, this is only "post", although we
@@ -107,13 +106,22 @@ class Moneypenny(metaclass=Singleton):
         when the order is executed--the initContainers will be run in
         sequence, with whatever securityContexts are specified in their
         YAML.
+
+        There may be an additional key, "volumes".  This will be an optional
+        list of volumes to be mounted to the container.  In the common case,
+        this will be a one-item list specifying the read-write volume
+        containing user homedirs.
         """
-        with open(orderfile, "r") as f:
+        with open(self.config.M, "r") as f:
             self.orders = yaml.safe_load(f)
 
-    async def execute_order(self, verb: str, dossier: Dict[str,Any]) -> None:
+    async def execute_order(self, verb: str, dossier: Dict[str, Any]) -> None:
         """Carry out an order based on standing orders and the dossier
-        supplied.
+        supplied.  This amounts to asking our Kubernetes client to create
+        a ConfigMap from the dossier, and then creating a pod with
+        initContainers from the initContainers specified in the standing
+        orders for the associated verb, as well as the Volumes (if any)
+        associated with the standing orders.
 
 
         Parameters
@@ -122,16 +130,51 @@ class Moneypenny(metaclass=Singleton):
         dossier: Dossier associated with the order for the user.
 
         """
-        verb=verb.strip().lower()
+        verb = verb.strip().lower()
         # We re-read the orders each time; the config map is allowed to change
         await self._read_orders()
         init_containers = self.orders.get(verb)
+        volumes = self.orders.get("volumes")
         if init_containers is None:
             raise NonsensicalOrderError(f"No orders for verb '{verb}'")
-        await self.k8s_client.make_pod(init_containers=init_containers,
-                                       dossier=dossier)
+        if volumes is None:
+            volumes = []
+        username = dossier["token"]["data"]["uid"]
+        logger.info(f"Submitting order '{verb}' for {username}")
+        pull_secret_name = self.config.docker_secret_name
+        self.k8s_client.make_objects(
+            username=username,
+            init_containers=init_containers,
+            volumes=volumes,
+            dossier=dossier,
+            pull_secret_name=pull_secret_name,
+        )
+        tmout = self.config.moneypenny_timeout
+        expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
+        # Wait for order to complete
+        logger.info(f"Awaiting completion for '{verb}': {username}")
+        count = 0
+        while True:
+            count += 1
+            logger.info(f"Checking on {username}: attempt #{count}")
+            finito = await self.check_completed(username)
+            if finito:
+                break
+            if datetime.datetime.now() > expiry:
+                estr = f"Pod for {username} did not complete in {tmout}s"
+                logger.exception(estr)
+                logger.info(f"Attempting tidy-up for {username}.")
+                self.k8s_client.delete_objects(username)
+                raise NoMrBondIExpectYouToDie(estr)
+            await asyncio.sleep(1)
+        logger.info(f"Order '{verb}' completed for {username}: tidying up.")
+        self.k8s_client.delete_objects(username)
+        logger.info(
+            f"Tidied up after '{verb}' for {username};"
+            + " awaiting further instructions."
+        )
 
-    async def check_completed(self, username: str) -> Bool:
+    async def check_completed(self, username: str) -> bool:
         """Check on the completion status of an order's execution.
 
         Parameters
@@ -149,9 +192,8 @@ class Moneypenny(metaclass=Singleton):
         ApiException if there was some other error
 
         """
-        return await self.k8s_client.pod_completed(username)
+        return self.k8s_client.check_pod_completed(username)
 
     async def dump(self) -> str:
-        repr = { "orders": self.orders,
-                 "quips": self.quips }
+        repr = {"orders": self.orders, "quips": self.quips}
         return json.dumps(repr, sort_keys=True, indent=4)

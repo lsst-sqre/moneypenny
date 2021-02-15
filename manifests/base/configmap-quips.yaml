@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quips-cm
+data:
+  quips.txt: |
+    Flattery will get you nowhere... but don't stop trying.

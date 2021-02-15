@@ -1,0 +1,11 @@
+post:
+  - name: farthing
+    image: lsstsqre/farthing
+    securityContext:
+      runAsUser: 1000        
+delete:
+  - name: farthing
+    image: lsstsqre/farthing
+    securityContext:
+      runAsUser: 1000
+volumes: []

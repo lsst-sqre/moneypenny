@@ -35,3 +35,8 @@ most recent changes to a minikube environment.
 Moneypenny is developed with the `Safir <https://safir.lsst.io>`__ framework.
 `Get started with development with the tutorial
  <https://safir.lsst.io/set-up-from-template.html>`__.
+
+Further Documentation
+=====================
+
+Moneypenny implements the proposal defined in `SQR-052 <https://sqr-052.lsst.io>`__.

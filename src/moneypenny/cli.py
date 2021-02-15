@@ -46,7 +46,11 @@ def help(ctx: click.Context, topic: Union[None, str], **kw: Any) -> None:
 
 @main.command()
 @click.option(
-    "--port", default=8080, type=int, help="Port to run the application on."
+    "--port",
+    "-p",
+    default=8080,
+    type=int,
+    help="Port to run the application on.",
 )
 @click.pass_context
 def run(ctx: click.Context, port: int) -> None:

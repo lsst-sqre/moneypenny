@@ -4,20 +4,20 @@ __all__ = ["create_app"]
 
 import structlog
 from aiohttp import web
-from kubernetes import config as kubeconfig
 from safir.http import init_http_session
 from safir.logging import configure_logging
 from safir.metadata import setup_metadata
 from safir.middleware import bind_logger
+
 from .config import Configuration
 from .handlers import init_external_routes, init_internal_routes
+from .moneypenny import Moneypenny
 
 logger = structlog.get_logger(__name__)
 
 
 def create_app() -> web.Application:
     """Create and configure the aiohttp.web application."""
-    kubeconfig.load_incluster_config()
     config = Configuration()
     configure_logging(
         profile=config.profile,
@@ -37,11 +37,11 @@ def create_app() -> web.Application:
     sub_app.add_routes(init_external_routes())
     root_app.add_subapp(f'/{root_app["safir/config"].name}', sub_app)
 
-    moneypenny=Moneypenny()
+    moneypenny = Moneypenny()
     root_app["moneypenny"] = moneypenny
-    root_app.on_startup.append(monyepenny.init)
-    root_app.on_cleanup.append(moneypenny.cleanup)    
-    
+    root_app.on_startup.append(moneypenny.init)
+    root_app.on_cleanup.append(moneypenny.cleanup)
+
     return root_app
 
 

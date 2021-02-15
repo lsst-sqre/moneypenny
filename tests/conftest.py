@@ -1,11 +1,7 @@
 """pytest fixtures for moneypenny"""
-import base64
 import inspect
-import io
-import logging
 import os
 import sys
-import tarfile
 import time
 from distutils.version import LooseVersion as V
 from functools import partial
@@ -13,24 +9,23 @@ from threading import Thread
 
 import kubernetes
 import pytest
-from kubernetes.client import V1Pod
-from kubernetes.client import V1PodSpec
+from kubernetes.client import V1Namespace, V1Pod, V1PodSpec
 from kubernetes.client.rest import ApiException
 from kubernetes.config import load_kube_config
 from kubernetes.stream import stream
 from kubernetes.watch import Watch
-from traitlets.config import Config
-
 from kubespawner.clients import shared_client
 
 here = os.path.abspath(os.path.dirname(__file__))
 m = os.path.join(here, "m.yaml")
 quips = os.path.join(here, "quips.txt")
 
+
 @pytest.fixture(scope="session")
 def kube_ns():
     """Fixture for the kubernetes namespace"""
     return os.environ.get("MONEYPENNY_TEST_NAMESPACE") or "moneypenny-test"
+
 
 def watch_logs(kube_client, pod_info):
     """Stream a single pod's logs
@@ -62,7 +57,10 @@ def watch_logs(kube_client, pod_info):
                 return
             else:
                 # unexpeced error
-                print(f"Error watching logs for {pod_info.name}: {e}", file=sys.stderr)
+                print(
+                    f"Error watching logs for {pod_info.name}: {e}",
+                    file=sys.stderr,
+                )
                 raise
         else:
             break
@@ -84,9 +82,12 @@ def watch_kubernetes(kube_client, kube_ns):
         namespace=kube_ns,
     ):
 
-        resource = event['object']
+        resource = event["object"]
         obj = resource.involved_object
-        print(f"k8s event ({event['type']} {obj.kind}/{obj.name}): {resource.message}")
+        print(
+            f"k8s event ({event['type']} {obj.kind}/{obj.name}):"
+            + f" {resource.message}"
+        )
 
         # new pod appeared, start streaming its logs
         if (
@@ -132,7 +133,7 @@ def kube_client(request, kube_ns):
         client.delete_namespace(kube_ns, body={}, grace_period_seconds=0)
         for i in range(3):
             try:
-                ns = client.read_namespace(kube_ns)
+                client.read_namespace(kube_ns)
             except ApiException as e:
                 if e.status == 404:
                     return
@@ -158,14 +159,17 @@ def wait_for_pod(kube_client, kube_ns, pod_name, timeout=90):
 
         if conditions.get("Ready") != "True":
             print(
-                f"Waiting for pod {kube_ns}/{pod_name}; current status: {pod.status.phase}; {conditions}"
+                f"Waiting for pod {kube_ns}/{pod_name};"
+                + f" current status: {pod.status.phase}; {conditions}"
             )
             time.sleep(1)
         else:
             break
 
     if conditions.get("Ready") != "True":
-        raise TimeoutError(f"pod {kube_ns}/{pod_name} failed to start: {pod.status}")
+        raise TimeoutError(
+            f"pod {kube_ns}/{pod_name} failed to start: {pod.status}"
+        )
     return pod
 
 
@@ -197,7 +201,9 @@ def ensure_not_exists(kube_client, kube_ns, name, resource_type, timeout=30):
             time.sleep(1)
 
 
-def create_resource(kube_client, kube_ns, resource_type, manifest, delete_first=True):
+def create_resource(
+    kube_client, kube_ns, resource_type, manifest, delete_first=True
+):
     """Create a kubernetes resource
 
     handling 409 errors and others that can occur due to rapid startup
@@ -219,7 +225,8 @@ def create_resource(kube_client, kube_ns, resource_type, manifest, delete_first=
             if e.status == 409:
                 break
             error = e
-            # need to retry since this can fail if run too soon after namespace creation
+            # need to retry since this can fail if run too
+            #  soon after namespace creation
             print(e, file=sys.stderr)
             time.sleep(int(e.headers.get("Retry-After", 1)))
         else:
@@ -228,134 +235,90 @@ def create_resource(kube_client, kube_ns, resource_type, manifest, delete_first=
         raise error
 
 
-def create_hub_pod(kube_client, kube_ns, pod_name="hub", ssl=False):
-    config_map_name = pod_name + "-config"
-    secret_name = pod_name + "-secret"
-    with open(jupyterhub_config_py) as f:
-        config = f.read()
+# Base create_moneypenny_pod on this et seq
+# def create_hub_pod(kube_client, kube_ns, pod_name="hub", ssl=False):
+#     config_map_name = pod_name + "-config"
+#     secret_name = pod_name + "-secret"
+#     with open(jupyterhub_config_py) as f:
+#         config = f.read()
 
-    config_map_manifest = V1ConfigMap(
-        metadata={"name": config_map_name}, data={"jupyterhub_config.py": config}
-    )
+#     config_map_manifest = V1ConfigMap(
+#         metadata={"name": config_map_name},
+#         data={"jupyterhub_config.py": config},
+#     )
 
-    config_map = create_resource(
-        kube_client,
-        kube_ns,
-        "config_map",
-        config_map_manifest,
-        delete_first=True,
-    )
+#     config_map = create_resource(
+#         kube_client,
+#         kube_ns,
+#         "config_map",
+#         config_map_manifest,
+#         delete_first=True,
+#     )
 
-    volumes = [{"name": "config", "configMap": {"name": config_map_name}}]
-    volume_mounts = [
-        {
-            "mountPath": "/etc/jupyterhub/jupyterhub_config.py",
-            "subPath": "jupyterhub_config.py",
-            "name": "config",
-        }
-    ]
-    if ssl:
-        volumes.append({"name": "secret", "secret": {"secretName": secret_name}})
-        volume_mounts.append(
-            {
-                "mountPath": "/etc/jupyterhub/secret",
-                "name": "secret",
-            }
-        )
+#     volumes = [{"name": "config", "configMap": {"name": config_map_name}}]
+#     volume_mounts = [
+#         {
+#             "mountPath": "/etc/jupyterhub/jupyterhub_config.py",
+#             "subPath": "jupyterhub_config.py",
+#             "name": "config",
+#         }
+#     ]
+#     if ssl:
+#         volumes.append(
+#             {"name": "secret", "secret": {"secretName": secret_name}}
+#         )
+#         volume_mounts.append(
+#             {
+#                 "mountPath": "/etc/jupyterhub/secret",
+#                 "name": "secret",
+#             }
+#         )
 
-    pod_manifest = V1Pod(
-        metadata={
-            "name": pod_name,
-            "labels": {"component": "hub", "hub-name": pod_name},
-        },
-        spec=V1PodSpec(
-            volumes=volumes,
-            containers=[
-                {
-                    "image": "jupyterhub/jupyterhub:1.3",
-                    "name": "hub",
-                    "volumeMounts": volume_mounts,
-                    "args": [
-                        "jupyterhub",
-                        "-f",
-                        "/etc/jupyterhub/jupyterhub_config.py",
-                    ],
-                    "env": [{"name": "PYTHONUNBUFFERED", "value": "1"}],
-                    "readinessProbe": {
-                        "tcpSocket": {
-                            "port": 8081,
-                        },
-                        "periodSeconds": 1,
-                    },
-                }
-            ],
-        ),
-    )
-    pod = create_resource(kube_client, kube_ns, "pod", pod_manifest)
-    return wait_for_pod(kube_client, kube_ns, pod_name)
-
-
-@pytest.fixture(scope="session")
-def hub_pod(kube_client, kube_ns):
-    """Create and return a pod running jupyterhub"""
-    return create_hub_pod(kube_client, kube_ns)
+#     pod_manifest = V1Pod(
+#         metadata={
+#             "name": pod_name,
+#             "labels": {"component": "hub", "hub-name": pod_name},
+#         },
+#         spec=V1PodSpec(
+#             volumes=volumes,
+#             containers=[
+#                 {
+#                     "image": "jupyterhub/jupyterhub:1.3",
+#                     "name": "hub",
+#                     "volumeMounts": volume_mounts,
+#                     "args": [
+#                         "jupyterhub",
+#                         "-f",
+#                         "/etc/jupyterhub/jupyterhub_config.py",
+#                     ],
+#                     "env": [{"name": "PYTHONUNBUFFERED", "value": "1"}],
+#                     "readinessProbe": {
+#                         "tcpSocket": {
+#                             "port": 8081,
+#                         },
+#                         "periodSeconds": 1,
+#                     },
+#                 }
+#             ],
+#         ),
+#     )
+#     pod = create_resource(kube_client, kube_ns, "pod", pod_manifest)
+#     return wait_for_pod(kube_client, kube_ns, pod_name)
 
 
-@pytest.fixture
-def hub(hub_pod):
-    """Return the jupyterhub Hub object for passing to Spawner constructors
-
-    Ensures the hub_pod is running
-    """
-    return Hub(ip=hub_pod.status.pod_ip, port=8081)
+# @pytest.fixture(scope="session")
+# def hub_pod(kube_client, kube_ns):
+#     """Create and return a pod running jupyterhub"""
+#     return create_hub_pod(kube_client, kube_ns)
 
 
-@pytest.fixture(scope="session")
-def hub_pod_ssl(kube_client, kube_ns, ssl_app):
-    """Start a hub pod with internal_ssl enabled"""
-    # load ssl dir to tarfile
-    buf = io.BytesIO()
-    tf = tarfile.TarFile(fileobj=buf, mode="w")
-    tf.add(ssl_app.internal_certs_location, arcname="internal-ssl", recursive=True)
+# @pytest.fixture
+# def hub(hub_pod):
+#     """Return the jupyterhub Hub object for passing to Spawner constructors
 
-    # store tarfile in a secret
-    b64_certs = base64.b64encode(buf.getvalue()).decode("ascii")
-    secret_name = "hub-ssl-secret"
-    secret_manifest = V1Secret(
-        metadata={"name": secret_name}, data={"internal-ssl.tar": b64_certs}
-    )
-    create_resource(kube_client, kube_ns, "secret", secret_manifest)
-
-    name = "hub-ssl"
-
-    service_manifest = V1Service(
-        metadata=dict(name=name),
-        spec=V1ServiceSpec(
-            type="ClusterIP",
-            ports=[V1ServicePort(port=8081, target_port=8081)],
-            selector={"hub-name": name},
-        ),
-    )
-
-    create_resource(kube_client, kube_ns, "service", service_manifest)
-
-    return create_hub_pod(
-        kube_client,
-        kube_ns,
-        pod_name=name,
-        ssl=True,
-    )
-
-
-@pytest.fixture
-def hub_ssl(kube_ns, hub_pod_ssl):
-    """Return the Hub object for connecting to a running hub pod with internal_ssl enabled"""
-    return Hub(
-        proto="https",
-        ip=f"{hub_pod_ssl.metadata.name}.{kube_ns}",
-        port=8081,
-        base_url="/hub/",
-    )
+#     Ensures the hub_pod is running
+#     """
+#     return Hub(ip=hub_pod.status.pod_ip, port=8081)
 
 
 class ExecError(Exception):
@@ -374,7 +337,9 @@ class ExecError(Exception):
         )
 
 
-def _exec_python_in_pod(kube_client, kube_ns, pod_name, code, kwargs=None, _retries=0):
+def _exec_python_in_pod(
+    kube_client, kube_ns, pod_name, code, kwargs=None, _retries=0
+):
     """Run simple Python code in a pod
 
     code can be a str of code, or a 'simple' Python function,
@@ -384,10 +349,10 @@ def _exec_python_in_pod(kube_client, kube_ns, pod_name, code, kwargs=None, _retr
     """
     if V(kubernetes.__version__) < V("11"):
         pytest.skip(
-            f"exec tests require kubernetes >= 11, got {kubernetes.__version__}"
+            "exec tests require kubernetes >= 11,"
+            + f" got {kubernetes.__version__}"
         )
-    pod = wait_for_pod(kube_client, kube_ns, pod_name)
-    original_code = code
+    wait_for_pod(kube_client, kube_ns, pod_name)
     if not isinstance(code, str):
         # allow simple self-contained (no globals or args) functions
         func = code
@@ -400,7 +365,9 @@ def _exec_python_in_pod(kube_client, kube_ns, pod_name, code, kwargs=None, _retr
             ]
         )
     elif kwargs:
-        raise ValueError("kwargs can only be passed to functions, not code strings.")
+        raise ValueError(
+            "kwargs can only be passed to functions, not code strings."
+        )
 
     exec_command = [
         "python3",
@@ -473,7 +440,7 @@ def exec_python(kube_ns, kube_client):
         spec=V1PodSpec(
             containers=[
                 {
-                    "image": "python:3.8",
+                    "image": "python:3.9",
                     "name": "python",
                     "args": ["/bin/sh", "-c", "while true; do sleep 5; done"],
                 }
@@ -481,6 +448,6 @@ def exec_python(kube_ns, kube_client):
             termination_grace_period_seconds=0,
         ),
     )
-    pod = create_resource(kube_client, kube_ns, "pod", pod_manifest)
+    create_resource(kube_client, kube_ns, "pod", pod_manifest)
 
     yield partial(_exec_python_in_pod, kube_client, kube_ns, pod_name)

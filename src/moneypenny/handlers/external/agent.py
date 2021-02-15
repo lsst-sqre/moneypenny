@@ -8,25 +8,26 @@ __all__ = [
 
 import json
 from importlib import resources
-from typing import List
 
 from aiohttp import web
 from jsonschema import validate
 
-from ..moneypenny import Moneypenny
-from ..handlers import routes
-from ..types import PodNotFound, APIException
+from ...errors import K8sApiException, PodNotFound
+from .. import routes
+
 
 @routes.get("/")
 async def quip(request: web.Request) -> web.Response:
-    """GET /moneypenny
+    """GET /moneypenny/
 
     Reply with a quip from Moneypenny (or a short conversational snippet)
 
     Returns a 200 response with the associated text being the quip.
     """
     moneypenny = request.config_dict["moneypenny"]
-    return web.HTTPOk(text=moneypenny.quip())
+    quip = await moneypenny.quip()
+    return web.HTTPOk(text=quip)
+
 
 @routes.get("/{username}")
 async def check_status(request: web.Request) -> web.Response:
@@ -36,23 +37,26 @@ async def check_status(request: web.Request) -> web.Response:
      a 202 response if it is still in progress, and raises an error otherwise.
     If the pod cannot be found, a 404 is raised; otherwise a 500 with
      descriptive text is raised.
+
+    Because Moneypenny tidies up rather quickly, a 200 is very unlikely,
+     a 202 fairly unlikely, and a 404 common.
     """
-    name = request.match_info["username"]
+    username = request.match_info["username"]
     moneypenny = request.config_dict["moneypenny"]
     try:
         completed = await moneypenny.check_completed(username)
         if completed:
-            return web.HTTPOk(text="Succeeded")
-        return web.HTTPAccepted(text="Running")
+            return web.HTTPOk(text=f"Pod for {username} succeeded")
+        return web.HTTPAccepted(text=f"Pod for {username} is running")
     except PodNotFound as exc:
         raise web.HTTPNotFound(text=str(exc))
     except K8sApiException as exc:
         raise web.HTTPInternalServerError(text=str(exc))
-    
+
 
 @routes.post("/")
 async def commission_agent(request: web.Request) -> web.Response:
-    """POST /moneypenny
+    """POST /moneypenny/
 
     Perform provisioning steps with the details from the body.
     Schema for the body is validated against the post.json file.
@@ -68,10 +72,9 @@ async def commission_agent(request: web.Request) -> web.Response:
         ),
     )
     moneypenny = request.config_dict["moneypenny"]
-    username = body["username"]
+    username = body["token"]["data"]["uid"]
     await moneypenny.execute_order(verb="post", dossier=body)
     return web.HTTPAccepted(text=f"Commissioning {username}")
-
 
 
 @routes.delete("/{username}")
@@ -81,7 +84,9 @@ async def retire_agent(request: web.Request) -> web.Response:
     Perform deprovisioning steps for the given username.  Returns a 202 once
     the request has been accepted.
     """
-    name = request.match_info["username"]
+    username = request.match_info["username"]
     moneypenny = request.config_dict["moneypenny"]
-    await moneypenny.execute_order(verb="delete", dossier={ "username": name })
+    await moneypenny.execute_order(
+        verb="delete", dossier={"token": {"data": {"uid": username}}}
+    )
     return web.HTTPAccepted(text=f"Retiring {username}")
