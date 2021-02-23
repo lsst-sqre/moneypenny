@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: moneypenny-m-config
+data:
+  m.yaml: |
+    commission:
+      - name: initcommission
+        image: lsstsqre/inituserhome
+        securityContext:
+          runAsUser: 0
+          runAsNonRootUser: false
+        volumeMounts:
+        - mountPath: /homedirs
+          name: homedirs
+    retire:
+      - name: farthing
+        image: lsstsqre/farthing
+        securityContext:
+          runAsUser: 1000
+          runAsNonRootUser: true
+          allowPrivilegeEscalation: false
+    volumes:
+      - name: homedirs
+        nfs:
+          server: 10.87.86.26
+          path: /share1/home
+

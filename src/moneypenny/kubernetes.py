@@ -5,16 +5,13 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 from kubernetes.client import (
-    V1Capabilities,
     V1ConfigMap,
     V1ConfigMapVolumeSource,
-    V1Container,
     V1LocalObjectReference,
     V1ObjectMeta,
     V1Pod,
     V1PodSecurityContext,
     V1PodSpec,
-    V1SecurityContext,
     V1Volume,
 )
 from kubernetes.client.api import core_v1_api
@@ -23,7 +20,10 @@ from kubernetes.config import load_incluster_config, load_kube_config
 from kubernetes.config.config_exception import ConfigException
 
 from .config import Configuration
-from .errors import K8sApiException, OperationFailed, PodNotFound
+from .exceptions import K8sApiException, OperationFailed, PodNotFound
+
+# This is not user-configurable; K8s specifies it.
+namespace_file: str = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 logger = structlog.get_logger(__name__)
 
@@ -49,21 +49,17 @@ class KubernetesClient:
     wrappers around the corresponding K8s API error.
     """
 
-    def __init__(self, moneypenny) -> None:  # type: ignore
-        """Create a new client for the cluster we are running in.
-        We ignore type in order to prevent a circular dependency."""
-        if not moneypenny:
-            raise ValueError(
-                "KubernetesClient must have an associated 'moneypenny'"
-            )
-        self.moneypenny = moneypenny
-        self.config: Configuration = moneypenny.config
-        namespace = "default"
-        nsf = self.config.namespace_file
+    def __init__(self, config: Configuration) -> None:
+        """Create a new client for the cluster we are running in."""
+        self.config = config
         try:
-            namespace = Path(nsf).read_text().strip()
+            namespace = Path(namespace_file).read_text().strip()
         except FileNotFoundError:
-            logger.warn(f"Namespace file {nsf} not found; using 'default'")
+            logger.warn(
+                f"Namespace file {namespace_file} not found;"
+                + " using 'default'"
+            )
+            namespace = "default"
         self.namespace = namespace
         try:
             load_incluster_config()
@@ -75,8 +71,8 @@ class KubernetesClient:
     def make_objects(
         self,
         username: str,
-        volumes: List[Any],
-        init_containers: List[Any],
+        volumes: List[Optional[Dict[str, Any]]],
+        containers: List[Dict[str, Any]],
         dossier: Dict[str, Any],
         pull_secret_name: Optional[str] = None,
     ) -> None:
@@ -89,9 +85,8 @@ class KubernetesClient:
         volumes: This is the list of Volumes to be mounted to the pod; in
           the usual case, it's a one-item list specifying the (read-write)
           filestore that contains the user home directories.
-        init_containers: This is the list of initContainers to be run,
-          in sequence.  The format is exactly what is deserialized with
-          yaml.safe_load().
+        containers: This is the list of containers to be run, in sequence.
+          The format is exactly what is deserialized with yaml.safe_load().
         dossier: This is a dictionary that has the format of a token
           returned by Gafaelfawr.
         pull_secret_name: name of the secret in the current namespace
@@ -100,7 +95,7 @@ class KubernetesClient:
         pod = self._make_pod(
             username=username,
             volumes=volumes,
-            init_containers=init_containers,
+            containers=containers,
             dossier=dossier,
             pull_secret_name=pull_secret_name,
         )
@@ -171,20 +166,22 @@ class KubernetesClient:
             return False
         if phase == "Unknown":
             raise OperationFailed(f"Pod {pname} in Unknown phase")
-        raise OperationFailed(status.message)
+        else:
+            # phase == "Failed"
+            raise OperationFailed(f"Pod {pname} failed: {status.message}")
 
     def _make_pod(
         self,
         username: str,
-        volumes: List[Any],
-        init_containers: List[Any],
+        volumes: List[Optional[Dict[str, Any]]],
+        containers: List[Dict[str, Any]],
         dossier: Dict[str, Any],
         pull_secret_name: Optional[str] = None,
     ) -> V1Pod:
         spec = self._make_pod_spec(
             username=username,
             volumes=volumes,
-            init_containers=init_containers,
+            containers=containers,
             dossier=dossier,
             pull_secret_name=pull_secret_name,
         )
@@ -196,30 +193,25 @@ class KubernetesClient:
     def _make_pod_spec(
         self,
         username: str,
-        volumes: List[Any],
-        init_containers: List[Any],
+        volumes: List[Optional[Dict[str, Any]]],
+        containers: List[Dict[str, Any]],
         dossier: Dict[str, Any],
         pull_secret_name: Optional[str] = None,
     ) -> V1PodSpec:
         """This is its own method for unit testing.  It just defines the
         in-memory K8s object corresponding to the Pod."""
-        container = V1Container(
-            name="null",
-            image=self.config.null_container_image,
-            security_context=V1SecurityContext(
-                allow_privilege_escalation=False,
-                capabilities=V1Capabilities(drop=["ALL"]),
-                read_only_root_filesystem=True,
-            ),
-        )
+        main_container = containers[-1]  # We must always have at least one.
+        init_containers = []
+        if len(containers) > 1:
+            init_containers = containers[:-1]
 
         if pull_secret_name:
             pull_secret = [V1LocalObjectReference(name=pull_secret_name)]
         else:
             pull_secret = []
 
-        self._add_dossier_vol(dossier, init_containers)
-        username = dossier["token"]["data"]["uid"]
+        self._add_dossier_vol(dossier, containers)
+        username = dossier["username"]
         vname = _name_object(f"dossier-{username}", "vol")
         cmname = _name_object(username, "cm")
         volumes.append(
@@ -230,18 +222,19 @@ class KubernetesClient:
                 ),
             )
         )
+        sec_ctx = V1PodSecurityContext(
+            # This will largely be overridden by init containers
+            run_as_group=1000,
+            run_as_user=1000,
+        )
         pod_spec = V1PodSpec(
             automount_service_account_token=False,
-            containers=[container],
+            containers=[main_container],
             init_containers=init_containers,
             image_pull_secrets=pull_secret,
             # node_selector=labels,
-            security_context=V1PodSecurityContext(
-                run_as_non_root=True,
-                run_as_group=1000,
-                run_as_user=1000,
-            ),
             restart_policy="OnFailure",
+            security_context=sec_ctx,
             volumes=volumes,
         )
         return pod_spec
@@ -254,7 +247,7 @@ class KubernetesClient:
         format, purely because Python includes a json parser but not
         a yaml parser in its standard library.
         """
-        uname = dossier["token"]["data"]["uid"]  # Fatal if key doesn't exist
+        uname = dossier["username"]  # Fatal if key doesn't exist
         cmname = _name_object(uname, "cm")
         djson = json.dumps(dossier, sort_keys=True, indent=4)
         data = {"dossier.json": djson}
@@ -262,12 +255,12 @@ class KubernetesClient:
         return cm
 
     def _add_dossier_vol(
-        self, dossier: Dict[str, Any], init_containers: List[Any]
+        self, dossier: Dict[str, Any], containers: List[Any]
     ) -> None:
-        """Updates init_containers in place."""
-        uname = dossier["token"]["data"]["uid"]
+        """Updates containers in place."""
+        uname = dossier["username"]
         vname = _name_object(f"dossier-{uname}", "vol")
-        for ctr in init_containers:
+        for ctr in containers:
             if not ctr.get("volumeMounts"):
                 ctr["volumeMounts"] = []
             ctr["volumeMounts"].append(

@@ -4,5 +4,8 @@ metadata:
   name: moneypenny
 rules:
 - apiGroups: [""]
-  resources: [ "pods", "configmaps"]
-  verbs: ["get", "list", "create", "watch", "delete"]
+  resources: [ "pods" ]
+  verbs: ["get", "create",  "delete"]  
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create",  "delete"]

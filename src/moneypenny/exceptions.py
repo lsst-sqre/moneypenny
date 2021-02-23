@@ -1,12 +1,5 @@
-"""Helper globals and errors for Moneypenny.
+"""Helper exceptions for Moneypenny.
 """
-
-namespace_file = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-primary_container_image = "library/alpine:latest"
-dossier_file = "/opt/lsst/software/moneypenny/config/dossier/dossier.yaml"
-M = "/opt/lsst/software/moneypenny/config/M/m.yaml"
-quips = "/opt/lsst/software/moneypenny/config/quips/quips.txt"
-moneypenny_timeout = 300
 
 
 class CatGotYourTongueError(Exception):

@@ -8,11 +8,12 @@ __all__ = [
 
 import json
 from importlib import resources
+from typing import Any, Dict
 
 from aiohttp import web
 from jsonschema import validate
 
-from ...errors import K8sApiException, PodNotFound
+from ...exceptions import K8sApiException, PodNotFound
 from .. import routes
 
 
@@ -54,17 +55,19 @@ async def check_status(request: web.Request) -> web.Response:
         raise web.HTTPInternalServerError(text=str(exc))
 
 
-@routes.post("/")
-async def commission_agent(request: web.Request) -> web.Response:
-    """POST /moneypenny/
+async def _validate_post(request: web.Request) -> Dict[str, Any]:
+    """Validates the POST body against the schema in post.json,
+    and ensures that there is only one request in flight for a given
+    user at any time.
 
-    Perform provisioning steps with the details from the body.
-    Schema for the body is validated against the post.json file.
+    Returns the dict corresponding to the json body of the post if
+    the post is acceptable according to the schema and if there is not
+    already a request in processing state for the specified user.
 
-    Returns 202 Accepted once the request has been submitted.
+    Raises a 409 Conflict if there is already a request in flight.
     """
-    body = await request.json()
 
+    body = await request.json()
     validate(
         instance=body,
         schema=json.loads(
@@ -72,21 +75,49 @@ async def commission_agent(request: web.Request) -> web.Response:
         ),
     )
     moneypenny = request.config_dict["moneypenny"]
-    username = body["token"]["data"]["uid"]
-    await moneypenny.execute_order(verb="post", dossier=body)
+    username = body["username"]
+    try:
+        completed = await moneypenny.check_completed(username)
+        if not completed:
+            raise web.HTTPConflict(
+                text=f"Orders for {username} are still" + " in-process"
+            )
+    except PodNotFound:
+        pass
+    return body
+
+
+@routes.post("/commission")
+async def commission_agent(request: web.Request) -> web.Response:
+    """POST /moneypenny/commission
+
+    Perform provisioning steps with the details from the body.
+    Schema for the body is validated against the post.json file.
+
+    Returns 202 Accepted once the request has been submitted.
+    """
+    body = await _validate_post(request)
+    moneypenny = request.config_dict["moneypenny"]
+    username = body["username"]
+
+    await moneypenny.dispatch_order(action="commission", dossier=body)
     return web.HTTPAccepted(text=f"Commissioning {username}")
 
 
-@routes.delete("/{username}")
+@routes.post("/retire")
 async def retire_agent(request: web.Request) -> web.Response:
-    """DELETE /moneypenny/{username}
+    """POST /moneypenny/retire
 
-    Perform deprovisioning steps for the given username.  Returns a 202 once
-    the request has been accepted.
+    Perform deprovisioning steps with the details from the body.
+    Schema for the body is validated against the post.json file.
+
+    Returns 202 Accepted once the request has been submitted.
+
+    Raises a 409 Conflict if there is already a request in flight.
     """
-    username = request.match_info["username"]
+    body = await _validate_post(request)
     moneypenny = request.config_dict["moneypenny"]
-    await moneypenny.execute_order(
-        verb="delete", dossier={"token": {"data": {"uid": username}}}
-    )
+    username = body["username"]
+
+    await moneypenny.dispatch_order(action="retire", dossier=body)
     return web.HTTPAccepted(text=f"Retiring {username}")
