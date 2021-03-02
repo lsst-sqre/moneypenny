@@ -35,7 +35,7 @@ commands =
 [testenv:typing]
 description = Run mypy.
 commands =
-    mypy src/cachemachine tests setup.py
+    mypy src/moneypenny tests setup.py
 
 [testenv:lint]
 description = Lint codebase by running pre-commit (Black, isort, Flake8).
@@ -47,13 +47,13 @@ commands = pre-commit run --all-files
 [testenv:run]
 description = Run the development server with auto-reload for code changes.
 usedevelop = true
-commands = adev runserver --app-factory create_app src/cachemachine/app.py
+commands = adev runserver --app-factory create_app src/moneypenny/app.py
 """
 
 [tool.coverage.run]
 parallel = true
 branch = true
-source = ["cachemachine"]
+source = ["moneypenny"]
 
 [tool.coverage.paths]
 source = ["src", ".tox/*/site-packages"]
@@ -93,5 +93,5 @@ exclude = '''
 [tool.isort]
 include_trailing_comma = true
 multi_line_output = 3
-known_first_party = ["cachemachine", "tests"]
+known_first_party = ["moneypenny", "tests"]
 skip = ["docs/conf.py"]

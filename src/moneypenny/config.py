@@ -40,3 +40,33 @@ class Configuration:
     Set by the ``DOCKER_SECRET_NAME`` environment variable,
     configured by the helm chart.
     """
+
+    dossier_path: str = os.getenv("MONEYPENNY_DOSSIER_FILE", "/opt/dossier")
+    """Path to the dossier file's mountpoint created in the initContainers.
+    Leave at default in normal operation.  Note that it does not contain the
+    filename (usually "dossier.json")
+    """
+
+    config_dir: str = os.getenv(
+        "MONEYPENNY_CONFIG_DIR", "/opt/lsst/software/moneypenny/config"
+    )
+    """Directory where the Moneypenny ConfigMaps will be mounted.  Leave
+    at default in normal operation.
+    """
+
+    m_config_path: str = os.getenv(
+        "MONEYPENNY_M_CONFIG_FILE", f"{config_dir}/M/m.yaml"
+    )
+    """Path to M's standing orders.  Leave at default in normal operation.
+    """
+
+    quips: str = os.getenv(
+        "MONEYPENNY_QUIP_FILE", f"{config_dir}/quips/quips.txt"
+    )
+    """Path to Moneypenny's quip file.  Leave at default in normal operation.
+    """
+
+    moneypenny_timeout: int = int(os.getenv("MONEYPENNY_TIMEOUT") or "300")
+    """Timeout (in seconds) to wait for all containers in the action pod to
+    complete.  Defaults to 300.
+    """

@@ -1,0 +1,15 @@
+commission:
+  - name: farthing
+    image: lsstsqre/farthing
+    securityContext:
+      runAsUser: 1000
+      runAsNonRootUser: true
+      allowPrivilegeEscalation: False
+retire:
+  - name: farthing
+    image: lsstsqre/farthing
+    securityContext:
+      runAsUser: 1000
+      runAsNonRootUser: true
+      allowPrivilegeEscalation: False
+volumes: []

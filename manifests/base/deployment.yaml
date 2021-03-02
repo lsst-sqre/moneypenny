@@ -1,27 +1,52 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cachemachine
+  name: moneypenny
   labels:
-    app: cachemachine
+    name: moneypenny
 spec:
   replicas: 1
   selector:
     matchLabels:
-      name: cachemachine
+      name: moneypenny
   template:
     metadata:
       labels:
-        name: cachemachine
+        name: moneypenny
     spec:
       containers:
-        - name: app
+        - name: moneypenny
           imagePullPolicy: "Always"
-          # Use images field in a Kustomization to regularly set/update image tag
-          image: "lsstsqre/cachemachine"
+          image: "lsstsqre/moneypenny:latest"
           ports:
             - containerPort: 8080
-              name: app
+              name: http
           envFrom:
             - configMapRef:
-                name: cachemachine
+                name: moneypenny
+          securityContext:
+            capabilities:
+              drop:
+                - all
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+          - name: m-config
+            mountPath: /opt/lsst/software/moneypenny/config/M
+            readOnly: true
+          - name: quips
+            mountPath: /opt/lsst/software/moneypenny/config/quips
+            readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      serviceAccountName: moneypenny
+      volumes:
+      - name: m-config
+        configMap:
+          name: moneypenny-m-config
+      - name: quips
+        configMap:
+          name: moneypenny-quips
+

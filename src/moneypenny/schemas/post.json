@@ -8,45 +8,66 @@
   "examples": [
     {
       "username": "jb007",
-      "uidNumber": 1007,
-      "isMemberOf": [
-	{
-	  "name": "doubleos",
-	  "id": 500
-	},
-	{
-	  "name": "staff",
-	  "id": 200
-	}
+      "uid": 1007,
+      "groups": [
+        {
+          "name": "doubleos",
+          "id": 500
+        },
+        {
+          "name": "staff",
+          "id": 200
+        }
       ]
     }
   ],
-  "required": [
-    "username",
-    "uidNumber",
-    "isMemberOf"
-  ],
   "properties": {
-    "name": {
-      "$id": "#/properties/username",
-      "type": "string",
-      "title": "The username of the requesting user",
-      "description": "username (with respect to auth system)",
-      "examples": [
-        "jb007"
-            ]
-    },
-    "uidNumber": {
+    "uid": {
       "$id": "#/properties/uidNumber",
       "type": "integer",
       "title": "Numeric UID of user",
-      "minimum": 1
+      "minimum": 1,
+      "examples": [
+        1007
+      ]
     },
-    "isMemberOf": {
-      "$id": "#/properties/isMemberOf",
+    "groups": {
+      "$id": "#/properties/groups",
       "type": "array",
-      "title": "List of group/GID pairs."
+      "title": "List of group/GID pairs.",
+      "items": {
+        "$id": "$#properties/groupitem",
+        "type": "object",
+        "properties": {
+          "id": {
+            "$id": "$/properties/gid",
+            "type": "integer",
+            "title": "Numeric GID of group",
+            "minimum": 1,
+            "examples": [
+              200
+            ]
+          },
+          "name": {
+            "$id": "$/properties/groupname",
+            "type": "string",
+            "title": "Group name",
+            "examples": [
+              "staff"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      }
     }
   },
-  "additionalProperties": false
+  "required": [
+    "uid",
+    "username",
+    "groups"
+  ],
+  "additionalProperties": true
 }

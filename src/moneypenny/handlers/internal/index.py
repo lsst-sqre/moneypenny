@@ -4,7 +4,7 @@ __all__ = ["get_index"]
 
 from aiohttp import web
 
-from cachemachine.handlers import internal_routes
+from moneypenny.handlers import internal_routes
 
 
 @internal_routes.get("/")
