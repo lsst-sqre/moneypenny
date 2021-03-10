@@ -10,11 +10,14 @@ import json
 from importlib import resources
 from typing import Any, Dict
 
+import structlog
 from aiohttp import web
 from jsonschema import validate
 
 from ...exceptions import K8sApiException, PodNotFound
 from .. import routes
+
+logger = structlog.get_logger(__name__)
 
 
 @routes.get("/")
@@ -25,6 +28,7 @@ async def quip(request: web.Request) -> web.Response:
 
     Returns a 200 response with the associated text being the quip.
     """
+    logger.debug("GET /moneypenny")
     moneypenny = request.config_dict["moneypenny"]
     quip = await moneypenny.quip()
     return web.HTTPOk(text=quip)
@@ -44,6 +48,7 @@ async def check_status(request: web.Request) -> web.Response:
     """
     username = request.match_info["username"]
     moneypenny = request.config_dict["moneypenny"]
+    logger.debug(f"GET /moneypenny/{username}")
     try:
         completed = await moneypenny.check_completed(username)
         if completed:
@@ -96,6 +101,7 @@ async def commission_agent(request: web.Request) -> web.Response:
 
     Returns 202 Accepted once the request has been submitted.
     """
+    logger.debug("POST /moneypenny/commission")
     body = await _validate_post(request)
     moneypenny = request.config_dict["moneypenny"]
     username = body["username"]
@@ -115,6 +121,7 @@ async def retire_agent(request: web.Request) -> web.Response:
 
     Raises a 409 Conflict if there is already a request in flight.
     """
+    logger.debug("POST /moneypenny/retire")
     body = await _validate_post(request)
     moneypenny = request.config_dict["moneypenny"]
     username = body["username"]
