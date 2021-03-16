@@ -7,8 +7,4 @@ __all__ = [
     "commission_agent",
     "retire_agent",
 ]
-from .agent import (
-    quip,
-    commission_agent,
-    retire_agent,
-)
+from .agent import commission_agent, quip, retire_agent
