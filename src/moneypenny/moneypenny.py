@@ -156,11 +156,17 @@ class Moneypenny:
         count = 0
         while datetime.datetime.now() < expiry:
             count += 1
+            completed_str = "completed"
             logger.info(f"Checking on {username}: attempt #{count}")
-            finito = await self.check_completed(username)
+            try:
+                finito = await self.check_completed(username)
+            except Exception as exc:
+                logger.error(f"{action}: {username} failed: {exc}")
+                completed_str = "failed"
+                finito = True
             if finito:
                 logger.info(
-                    f"Order '{action}' completed for {username}: "
+                    f"Order '{action}' {completed_str} for {username}: "
                     + "tidying up."
                 )
                 self.k8s_client.delete_objects(username)

@@ -129,8 +129,14 @@ class KubernetesClient:
         ------
         K8sApiException if the deletion failed.
         """
+        # Do the configmap first, because we may get here as a result of
+        #  a pod failure, and so the pod_delete will throw an error if it's
+        #  already gone or never existed in the first place.
+        try:
+            self._configmap_delete(username)
+        except Exception as exc:
+            logger.error(f"Deleting configmap for {username} failed: {exc}")
         self._pod_delete(username)
-        self._configmap_delete(username)
 
     def check_pod_completed(self, username: str) -> bool:
         """Return true if the pod completed successfully, false if it
