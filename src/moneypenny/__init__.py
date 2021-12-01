@@ -1,5 +1,7 @@
 """The Moneypenny service."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .app import create_app
 from .config import Configuration
 from .kubernetes import KubernetesClient
@@ -12,14 +14,6 @@ __all__ = [
     "KubernetesClient",
     "create_app",
 ]
-
-import sys
-
-if sys.version_info < (3, 8):
-    from importlib_metadata import PackageNotFoundError, version
-else:
-    from importlib.metadata import PackageNotFoundError, version
-
 
 __version__: str
 """The application version string (PEP 440 / SemVer compatible)."""

@@ -5,14 +5,12 @@
 # After editing, update requirements/main.txt by running:
 #     make update-deps
 
-safir<2
-aiohttp
 aiodns
+aiohttp
 aiojobs
 cchardet
-importlib_metadata
 click
-kubernetes
 jsonschema
-requests==2.25.0
-
+kubernetes
+requests
+safir<2

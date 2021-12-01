@@ -9,7 +9,6 @@
 
 aiohttp-devtools
 coverage[toml]
-flake8
 mypy
 pre-commit
 pytest
