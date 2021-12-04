@@ -5,12 +5,12 @@
 # After editing, update requirements/main.txt by running:
 #     make update-deps
 
-aiodns
-aiohttp
-aiojobs
-cchardet
+# These dependencies are for fastapi including some optional features.
+fastapi
+starlette
+uvicorn[standard]
+
+# Other dependencies.
 click
-jsonschema
-kubernetes
-requests
-safir<2
+kubernetes_asyncio
+safir

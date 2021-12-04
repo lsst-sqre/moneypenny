@@ -50,11 +50,8 @@ jobs:
           restore-keys: |
             tox-${{ matrix.python }}-${{ hashFiles('requirements/*.txt') }}-
 
-      # Regular tests are disabled becasue the test suite requires a
-      # Kubernetes cluster and the work to set that up in GitHub Actions
-      # has not yet been done.
       - name: Run tox
-        run: tox -e typing
+        run: tox -e py,coverage-report,typing
 
   build:
     runs-on: ubuntu-latest

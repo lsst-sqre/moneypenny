@@ -70,3 +70,7 @@ class Configuration:
     """Timeout (in seconds) to wait for all containers in the action pod to
     complete.  Defaults to 300.
     """
+
+
+config = Configuration()
+"""Configuration for Moneypenny."""

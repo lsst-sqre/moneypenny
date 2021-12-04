@@ -2,7 +2,6 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .app import create_app
 from .config import Configuration
 from .kubernetes import KubernetesClient
 from .moneypenny import Moneypenny

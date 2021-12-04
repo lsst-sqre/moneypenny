@@ -1,8 +1,6 @@
-"""Moneypenny is M's executive assistant.
-"""
-__all__ = [
-    "Moneypenny",
-]
+"""Moneypenny is M's executive assistant."""
+
+from __future__ import annotations
 
 import asyncio
 import datetime
@@ -12,16 +10,17 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 import yaml
-from aiohttp import web
-from aiojobs import create_scheduler
 
-from .config import Configuration
+from .config import config
 from .exceptions import (
     CatGotYourTongueError,
     NoMrBondIExpectYouToDie,
     NonsensicalOrderError,
 )
 from .kubernetes import KubernetesClient
+from .models import Dossier
+
+__all__ = ["Moneypenny"]
 
 logger = structlog.get_logger(__name__)
 
@@ -30,32 +29,10 @@ class Moneypenny:
     """Moneypenny provides the high-level interface for administrative
     tasks within the Kubernetes cluster."""
 
-    async def init(self, app: web.Application) -> None:
-        """Only called from the aiohttp startup hook.
+    def __init__(self, k8s_client: KubernetesClient) -> None:
+        self.k8s_client = k8s_client
 
-        Parameters
-        ----------
-        app: unused.  Associated application instance.
-        """
-
-        self.config = Configuration()
-        self.k8s_client = KubernetesClient(config=self.config)
-        self._scheduler = await create_scheduler()
-
-    async def cleanup(self, app: web.Application) -> None:
-        """Clean up on exit.
-
-        Called from the aiohttp server cleanup hook only.
-
-        Note: By closing the scheduler, that will clean up all the
-        jobs running inside of it.
-
-        Parameters
-        ----------
-        app: unused.  Associated application instance."""
-        await self._scheduler.close()
-
-    async def _read_quips(self) -> List[str]:
+    def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to
         say, blocks of text separated by lines consisting only of '%'.
 
@@ -65,7 +42,7 @@ class Moneypenny:
         """
         q_idx: int = 0
         quips: List[str] = [""]
-        with open(self.config.quips, "r") as f:
+        with open(config.quips, "r") as f:
             for line in f:
                 if line.startswith("#"):
                     continue
@@ -76,48 +53,50 @@ class Moneypenny:
                 quips[q_idx] += line
         return quips
 
-    async def quip(self) -> str:
+    def quip(self) -> str:
         """Return one of our quips at random."""
         # We reload quips each time; changing the configmap under a running
         #  instance is allowed.
-        quips = await self._read_quips()
+        quips = self._read_quips()
         try:
             return random.choice(quips)
             # We need at least one quip in the list
         except IndexError:
             raise CatGotYourTongueError()
 
-    async def _read_order(self, order: str) -> List[Dict[str, Any]]:
+    def _read_order(self, order: str) -> List[Dict[str, Any]]:
         """Read an order from M.  The order key corresponds to a route in
         handlers.external.  What is returned is a list of containers to
         be run in sequence for that order.
         """
-        with open(self.config.m_config_path, "r") as f:
+        with open(config.m_config_path, "r") as f:
             orders = yaml.safe_load(f)
         try:
             return orders[order]
         except KeyError:
-            raise NonsensicalOrderError
+            raise NonsensicalOrderError()
 
-    async def _read_volumes(self) -> List[Optional[Dict[str, Any]]]:
+    def _read_volumes(self) -> List[Optional[Dict[str, Any]]]:
         vols: List[Optional[Dict[str, Any]]] = []
         try:
-            vols = await self._read_order("volumes")  # type: ignore
+            vols = self._read_order("volumes")  # type: ignore
         except NonsensicalOrderError:
             pass
         return vols
 
-    async def dispatch_order(
-        self, action: str, dossier: Dict[str, Any]
-    ) -> None:
-        """Hand a new order to the scheduler.  This lets us handle it
-        asynchronously.
-        """
-        await self._scheduler.spawn(self.execute_order(action, dossier))
+    async def dispatch_order(self, action: str, dossier: Dossier) -> None:
+        """Start a background task to carry out an order.
 
-    async def execute_order(
-        self, action: str, dossier: Dict[str, Any]
-    ) -> None:
+        This is done instead of using FastAPI's ``BackgroundTasks`` directly
+        because httpx's ``AsyncClient`` blocks return from a call to a test
+        app until all background tasks have completed, which isn't the
+        behavior we want to test.  This technique was taken from
+        https://stackoverflow.com/questions/68542054/
+        """
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.execute_order(action, dossier))
+
+    async def execute_order(self, action: str, dossier: Dossier) -> None:
         """Carry out an order based on standing orders and the dossier
         supplied.  This amounts to asking our Kubernetes client to create
         a ConfigMap from the dossier, and then creating a pod with
@@ -134,22 +113,22 @@ class Moneypenny:
         dossier: Dossier associated with the order for the user.
 
         """
-        username = dossier["username"]
+        username = dossier.username
         logger.info(f"Submitting order '{action}' for {username}")
-        volumes = await self._read_volumes()
-        containers = await self._read_order(action)
+        volumes = self._read_volumes()
+        containers = self._read_order(action)
         if not containers:
             logger.warning("Empty order for {action}")
             return
-        pull_secret_name = self.config.docker_secret_name
-        self.k8s_client.make_objects(
+        pull_secret_name = config.docker_secret_name
+        await self.k8s_client.make_objects(
             username=username,
             containers=containers,
             volumes=volumes,
             dossier=dossier,
             pull_secret_name=pull_secret_name,
         )
-        tmout = self.config.moneypenny_timeout
+        tmout = config.moneypenny_timeout
         expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
         # Wait for order to complete
         logger.info(f"Awaiting completion for '{action}': {username}")
@@ -169,19 +148,20 @@ class Moneypenny:
                     f"Order '{action}' {completed_str} for {username}: "
                     + "tidying up."
                 )
-                self.k8s_client.delete_objects(username)
+                await self.k8s_client.delete_objects(username)
                 logger.info(
                     f"Tidied up after '{action}' for {username};"
                     + " awaiting further instructions."
                 )
                 return
             # logarithmic backoff on wait
+            assert count < 10
             await asyncio.sleep(int(log(count)))
         # Timed out
         estr = f"Pod '{action}' for {username} did not complete in {tmout}s"
         logger.exception(estr)
         logger.info(f"Attempting tidy-up for {username}.")
-        self.k8s_client.delete_objects(username)
+        await self.k8s_client.delete_objects(username)
         raise NoMrBondIExpectYouToDie(estr)
 
     async def check_completed(self, username: str) -> bool:
@@ -201,4 +181,4 @@ class Moneypenny:
         ApiException if there was some other error
 
         """
-        return self.k8s_client.check_pod_completed(username)
+        return await self.k8s_client.check_pod_completed(username)
