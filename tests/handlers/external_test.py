@@ -124,6 +124,9 @@ async def test_route_commission(
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code in (200, 404)
 
+    # Wait a bit for the background thread to run.  It will generally finish
+    # way faster than 5s, but this should be robust against overloaded test
+    # runners.
     timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
     count = 1
     while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
@@ -218,6 +221,9 @@ async def test_route_retire(
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code in (200, 404)
 
+    # Wait a bit for the background thread to run.  It will generally finish
+    # way faster than 5s, but this should be robust against overloaded test
+    # runners.
     timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
     count = 1
     while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
