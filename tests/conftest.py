@@ -1,49 +1,68 @@
-import asyncio
-import json
-import os
-from typing import Any, AsyncGenerator, Dict, Generator
+"""Test fixtures."""
 
-import aiohttp
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+from unittest.mock import Mock, patch
+
+import kubernetes_asyncio
 import pytest
+from asgi_lifespan import LifespanManager
+from httpx import AsyncClient
+from kubernetes_asyncio.client import ApiClient
 
-import moneypenny
+import moneypenny.kubernetes
+from moneypenny import main
+from moneypenny.config import config
+from moneypenny.models import Dossier, Group
+from tests.support.kubernetes import MockKubernetesApi
 
-here = os.path.dirname(os.path.realpath(__file__))
-assets = os.path.join(here, "_assets")
+if TYPE_CHECKING:
+    from typing import AsyncIterator, Iterator
 
-
-@pytest.fixture(scope="module")
-def loop() -> Generator:
-    loop = asyncio.get_event_loop()
-    yield loop
-
-
-@pytest.fixture(scope="module")
-async def app(loop: asyncio.AbstractEventLoop) -> AsyncGenerator:
-    m_app = moneypenny.create_app()
-    runner = aiohttp.web.AppRunner(m_app)
-    await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 8080)
-    await site.start()
-    eve = m_app["moneypenny"]
-    cfg = eve.config
-    cfg.m_config_path = os.path.join(assets, "m.yaml")
-    cfg.quips = os.path.join(assets, "quips.txt")
-    yield m_app
-    await site.stop()
-    await runner.cleanup()
+    from fastapi import FastAPI
 
 
-@pytest.fixture(scope="module")
-def dossier() -> Dict[str, Any]:
-    with open(os.path.join(assets, "dossier.json")) as f:
-        return json.load(f)
+@pytest.fixture
+async def app(mock_kubernetes: MockKubernetesApi) -> AsyncIterator[FastAPI]:
+    """Return a configured test application.
+
+    Wraps the application in a lifespan manager so that startup and shutdown
+    events are sent during test execution.
+    """
+    assets_path = Path(__file__).parent / "_assets"
+    config.m_config_path = str(assets_path / "m.yaml")
+    config.quips = str(assets_path / "quips.txt")
+    config.moneypenny_timeout = 5
+    async with LifespanManager(main.app):
+        yield main.app
 
 
-@pytest.fixture(scope="module")
-async def session(
-    loop: asyncio.AbstractEventLoop, app: aiohttp.web.Application
-) -> AsyncGenerator:
-    ses = aiohttp.ClientSession()
-    yield ses
-    await ses.close()
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
+    """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
+    async with AsyncClient(app=app, base_url="https://example.com/") as client:
+        yield client
+
+
+@pytest.fixture
+def dossier() -> Dossier:
+    return Dossier(
+        username="jb007",
+        uid=1007,
+        groups=[Group(name="doubleos", id=500), Group(name="staff", id=200)],
+    )
+
+
+@pytest.fixture
+def mock_kubernetes() -> Iterator[MockKubernetesApi]:
+    """Replace the Kubernetes API with a mock class."""
+    mock_api = MockKubernetesApi()
+    with patch.object(moneypenny.kubernetes, "CoreV1Api") as mock_class:
+        mock_class.return_value = mock_api
+        with patch.object(moneypenny.kubernetes, "ApiClient") as mock_client:
+            mock_client.return_value = Mock(spec=ApiClient)
+            with patch.object(kubernetes_asyncio, "config") as mock_config:
+                mock_config.load_incluster_config = Mock()
+                yield mock_api

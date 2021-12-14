@@ -1,10 +1,16 @@
 """Kubernetes client abstraction for Moneypenny."""
+
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import kubernetes_asyncio
 import structlog
-from kubernetes.client import (
+from kubernetes_asyncio.client import (
+    ApiClient,
+    CoreV1Api,
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1LocalObjectReference,
@@ -14,13 +20,12 @@ from kubernetes.client import (
     V1PodSpec,
     V1Volume,
 )
-from kubernetes.client.api import core_v1_api
-from kubernetes.client.exceptions import ApiException
-from kubernetes.config import load_incluster_config, load_kube_config
-from kubernetes.config.config_exception import ConfigException
+from kubernetes_asyncio.client.exceptions import ApiException
+from kubernetes_asyncio.config import ConfigException
 
-from .config import Configuration
+from .config import config
 from .exceptions import K8sApiException, OperationFailed, PodNotFound
+from .models import Dossier
 
 # This is not user-configurable; K8s specifies it.
 namespace_file: str = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -49,31 +54,43 @@ class KubernetesClient:
     wrappers around the corresponding K8s API error.
     """
 
-    def __init__(self, config: Configuration) -> None:
-        """Create a new client for the cluster we are running in."""
-        self.config = config
+    @classmethod
+    async def create(cls) -> KubernetesClient:
+        """Create a new `KubernetesClient`.
+
+        Call this method rather than the constructor.
+        """
         try:
-            namespace = Path(namespace_file).read_text().strip()
+            kubernetes_asyncio.config.load_incluster_config()
+        except ConfigException:
+            logger.warn("In-cluster config failed; trying kube_config")
+            await kubernetes_asyncio.config.load_kube_config()
+        api = ApiClient()
+        return cls(api)
+
+    def __init__(self, api: kubernetes_asyncio.client.ApiClient) -> None:
+        """Create a new client for the cluster we are running in."""
+        try:
+            self.namespace = Path(namespace_file).read_text().strip()
         except FileNotFoundError:
             logger.warn(
                 f"Namespace file {namespace_file} not found;"
                 + " using 'default'"
             )
-            namespace = "default"
-        self.namespace = namespace
-        try:
-            load_incluster_config()
-        except ConfigException:
-            logger.warn("In-cluster config failed; trying kube_config.")
-            load_kube_config()  # Crash and burn if this fails too.
-        self.api = core_v1_api.CoreV1Api()
+            self.namespace = "default"
+        self.api = api
+        self.v1 = CoreV1Api(api)
 
-    def make_objects(
+    async def aclose(self) -> None:
+        """Close the Kubernetes API client."""
+        await self.api.close()
+
+    async def make_objects(
         self,
         username: str,
         volumes: List[Optional[Dict[str, Any]]],
         containers: List[Dict[str, Any]],
-        dossier: Dict[str, Any],
+        dossier: Dossier,
         pull_secret_name: Optional[str] = None,
     ) -> None:
         """Create a new Pod with provisioning initContainers along with
@@ -102,7 +119,7 @@ class KubernetesClient:
         dossier_cm = self._create_dossier_configmap(dossier)
         logger.info(f"Creating configmap for {username}")
         try:
-            status = self.api.create_namespaced_config_map(
+            status = await self.v1.create_namespaced_config_map(
                 self.namespace, dossier_cm
             )
         except ApiException as e:
@@ -111,13 +128,13 @@ class KubernetesClient:
         logger.debug(f"Configmap for {username} created: {status}")
         logger.info(f"Creating pod for {username}")
         try:
-            status = self.api.create_namespaced_pod(self.namespace, pod)
+            status = await self.v1.create_namespaced_pod(self.namespace, pod)
         except ApiException as e:
             logger.exception("Exception creating pod")
             raise K8sApiException(e)
         logger.debug(f"Pod for {username} created: {status}")
 
-    def delete_objects(self, username: str) -> None:
+    async def delete_objects(self, username: str) -> None:
         """Delete both the pod and its associated configmap, given a
         username.
 
@@ -133,12 +150,12 @@ class KubernetesClient:
         #  a pod failure, and so the pod_delete will throw an error if it's
         #  already gone or never existed in the first place.
         try:
-            self._configmap_delete(username)
+            await self._configmap_delete(username)
         except Exception as exc:
             logger.error(f"Deleting configmap for {username} failed: {exc}")
-        self._pod_delete(username)
+        await self._pod_delete(username)
 
-    def check_pod_completed(self, username: str) -> bool:
+    async def check_pod_completed(self, username: str) -> bool:
         """Return true if the pod completed successfully, false if it
         is pending or running, and raise an exception if any part of the
         execution failed.
@@ -158,7 +175,7 @@ class KubernetesClient:
         """
         pname = _name_object(username, "pod")
         try:
-            pod = self.api.read_namespaced_pod(pname, self.namespace)
+            pod = await self.v1.read_namespaced_pod(pname, self.namespace)
             status = pod.status
         except ApiException as exc:
             if exc.status == 404:
@@ -181,7 +198,7 @@ class KubernetesClient:
         username: str,
         volumes: List[Optional[Dict[str, Any]]],
         containers: List[Dict[str, Any]],
-        dossier: Dict[str, Any],
+        dossier: Dossier,
         pull_secret_name: Optional[str] = None,
     ) -> V1Pod:
         spec = self._make_pod_spec(
@@ -192,7 +209,7 @@ class KubernetesClient:
             pull_secret_name=pull_secret_name,
         )
         pname = _name_object(username, "pod")
-        md = V1ObjectMeta(name=pname)
+        md = V1ObjectMeta(name=pname, namespace=self.namespace)
         pod = V1Pod(metadata=md, spec=spec)
         return pod
 
@@ -201,7 +218,7 @@ class KubernetesClient:
         username: str,
         volumes: List[Optional[Dict[str, Any]]],
         containers: List[Dict[str, Any]],
-        dossier: Dict[str, Any],
+        dossier: Dossier,
         pull_secret_name: Optional[str] = None,
     ) -> V1PodSpec:
         """This is its own method for unit testing.  It just defines the
@@ -217,7 +234,7 @@ class KubernetesClient:
             pull_secret = []
 
         self._add_dossier_vol(dossier, containers)
-        username = dossier["username"]
+        username = dossier.username
         vname = _name_object(f"dossier-{username}", "vol")
         cmname = _name_object(username, "cm")
         volumes.append(
@@ -245,56 +262,42 @@ class KubernetesClient:
         )
         return pod_spec
 
-    def _create_dossier_configmap(
-        self, dossier: Dict[str, Any]
-    ) -> V1ConfigMap:
+    def _create_dossier_configmap(self, dossier: Dossier) -> V1ConfigMap:
         """Build the configmap containing the dossier that will be
         mounted to the working container.  Dossier will be in JSON
         format, purely because Python includes a json parser but not
         a yaml parser in its standard library.
         """
-        uname = dossier["username"]  # Fatal if key doesn't exist
-        cmname = _name_object(uname, "cm")
-        djson = json.dumps(dossier, sort_keys=True, indent=4)
+        cmname = _name_object(dossier.username, "cm")
+        djson = json.dumps(dossier.dict(), sort_keys=True, indent=4)
         data = {"dossier.json": djson}
-        cm = V1ConfigMap(metadata=V1ObjectMeta(name=cmname), data=data)
+        cm = V1ConfigMap(
+            metadata=V1ObjectMeta(name=cmname, namespace=self.namespace),
+            data=data,
+        )
         return cm
 
     def _add_dossier_vol(
-        self, dossier: Dict[str, Any], containers: List[Any]
+        self, dossier: Dossier, containers: List[Any]
     ) -> None:
         """Updates containers in place."""
-        uname = dossier["username"]
-        vname = _name_object(f"dossier-{uname}", "vol")
+        vname = _name_object(f"dossier-{dossier.username}", "vol")
         for ctr in containers:
             if not ctr.get("volumeMounts"):
                 ctr["volumeMounts"] = []
             ctr["volumeMounts"].append(
                 {
                     "name": vname,
-                    "mountPath": self.config.dossier_path,
+                    "mountPath": config.dossier_path,
                     "readOnly": True,
                 }
             )
 
-    def _configmap_create(self, cm: V1ConfigMap) -> None:
-        """Create the ConfigMap in the cluster."""
-        try:
-            status = self.api.create_namespaced_configmap(self.namespace, cm)
-        except ApiException as e:
-            if e.status != 409:
-                estr = "Create configmap failed: {}".format(e)
-                logger.exception(estr)
-                raise K8sApiException(e)
-            else:
-                logger.info("Configmap already exists.")
-        logger.debug(f"Configmap created: {status}")
-
-    def _configmap_delete(self, username: str) -> None:
+    async def _configmap_delete(self, username: str) -> None:
         """Delete the ConfigMap for the given name."""
         cmname = _name_object(username, "cm")
         try:
-            status = self.api.delete_namespaced_config_map(
+            status = await self.v1.delete_namespaced_config_map(
                 name=cmname, namespace=self.namespace
             )
         except ApiException as e:
@@ -302,12 +305,12 @@ class KubernetesClient:
             raise K8sApiException(e)
         logger.debug(f"Configmap {cmname} deleted: {status}")
 
-    def _pod_delete(self, username: str) -> None:
+    async def _pod_delete(self, username: str) -> None:
         """Delete the pod for the given username."""
         logger.info(f"Deleting pod for {username}")
         pname = _name_object(username, "pod")
         try:
-            status = self.api.delete_namespaced_pod(pname, self.namespace)
+            status = await self.v1.delete_namespaced_pod(pname, self.namespace)
         except ApiException as exc:
             logger.exception("Exception deleting pod")
             raise K8sApiException(exc)
