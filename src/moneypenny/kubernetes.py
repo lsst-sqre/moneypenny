@@ -303,7 +303,18 @@ class KubernetesClient:
         djson = json.dumps(dossier.dict(), sort_keys=True, indent=4)
         data = {"dossier.json": djson}
         cm = V1ConfigMap(
-            metadata=V1ObjectMeta(name=cmname, namespace=self.namespace),
+            metadata=V1ObjectMeta(
+                name=cmname,
+                namespace=self.namespace,
+                owner_references=[
+                    V1OwnerReference(
+                        api_version="v1",
+                        kind="Pod",
+                        name=_read_pod_info("name"),
+                        uid=_read_pod_info("uid"),
+                    )
+                ],
+            ),
             data=data,
         )
         return cm

@@ -85,3 +85,11 @@ def test_make_configmap(app: FastAPI, dossier: Dossier) -> None:
     cmap = client._create_dossier_configmap(dossier=dossier)
     assert cmap.data["dossier.json"] == djson
     assert cmap.metadata.name == f"{dossier.username}-cm"
+    assert cmap.metadata.owner_references == [
+        V1OwnerReference(
+            api_version="v1",
+            kind="Pod",
+            name="moneypenny-78547dcf97-9xqq8",
+            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+        )
+    ]

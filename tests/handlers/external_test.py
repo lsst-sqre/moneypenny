@@ -62,7 +62,16 @@ async def test_route_commission(
         [
             V1ConfigMap(
                 metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-cm", namespace="default"
+                    name=f"{dossier.username}-cm",
+                    namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 data={
                     "dossier.json": json.dumps(
@@ -168,7 +177,16 @@ async def test_route_retire(
         [
             V1ConfigMap(
                 metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-cm", namespace="default"
+                    name=f"{dossier.username}-cm",
+                    namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 data={
                     "dossier.json": json.dumps(
