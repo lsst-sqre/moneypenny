@@ -19,6 +19,7 @@ from kubernetes_asyncio.client import (
     V1Volume,
 )
 
+from tests.support.constants import TEST_HOSTNAME
 from tests.support.kubernetes import assert_kubernetes_objects_are
 
 if TYPE_CHECKING:
@@ -26,6 +27,11 @@ if TYPE_CHECKING:
 
     from moneypenny.models import Dossier
     from tests.support.kubernetes import MockKubernetesApi
+
+
+def url_for(partial_url: str) -> str:
+    """Return the full URL for a partial URL."""
+    return f"https://{TEST_HOSTNAME}/moneypenny/{partial_url}"
 
 
 @pytest.mark.asyncio
@@ -43,7 +49,8 @@ async def test_route_commission(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/commission", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
 
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code == 202
@@ -140,7 +147,8 @@ async def test_route_retire(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/retire", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
 
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code == 202
@@ -237,7 +245,8 @@ async def test_simultaneous_orders(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/commission", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
     r = await client.post("/moneypenny/commission", json=dossier.dict())
     assert r.status_code == 409
 

@@ -16,6 +16,7 @@ import moneypenny.kubernetes
 from moneypenny import main
 from moneypenny.config import config
 from moneypenny.models import Dossier, Group
+from tests.support.constants import TEST_HOSTNAME
 from tests.support.kubernetes import MockKubernetesApi
 
 if TYPE_CHECKING:
@@ -42,7 +43,8 @@ async def app(mock_kubernetes: MockKubernetesApi) -> AsyncIterator[FastAPI]:
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
-    async with AsyncClient(app=app, base_url="https://example.com/") as client:
+    base_url = f"https://{TEST_HOSTNAME}/"
+    async with AsyncClient(app=app, base_url=base_url) as client:
         yield client
 
 
