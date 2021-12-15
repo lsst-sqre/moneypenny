@@ -6,9 +6,8 @@ import asyncio
 import datetime
 import random
 from math import log
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING
 
-import structlog
 import yaml
 
 from .config import config
@@ -17,20 +16,27 @@ from .exceptions import (
     NoMrBondIExpectYouToDie,
     NonsensicalOrderError,
 )
-from .kubernetes import KubernetesClient
 from .models import Dossier
 
-__all__ = ["Moneypenny"]
+if TYPE_CHECKING:
+    from typing import Any, Dict, List, Optional
 
-logger = structlog.get_logger(__name__)
+    from structlog.stdlib import BoundLogger
+
+    from .kubernetes import KubernetesClient
+
+__all__ = ["Moneypenny"]
 
 
 class Moneypenny:
     """Moneypenny provides the high-level interface for administrative
     tasks within the Kubernetes cluster."""
 
-    def __init__(self, k8s_client: KubernetesClient) -> None:
+    def __init__(
+        self, k8s_client: KubernetesClient, logger: BoundLogger
+    ) -> None:
         self.k8s_client = k8s_client
+        self.logger = logger
 
     def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to
@@ -105,11 +111,11 @@ class Moneypenny:
             Dossier associated with the order for the user.
         """
         username = dossier.username
-        logger.info(f"Submitting order '{action}' for {username}")
+        self.logger.info(f"Submitting order '{action}' for {username}")
         volumes = self._read_volumes()
         containers = self._read_order(action)
         if not containers:
-            logger.warning("Empty order for {action}")
+            self.logger.warning("Empty order for {action}")
             return
         await self.k8s_client.make_objects(
             username=username,
@@ -147,26 +153,26 @@ class Moneypenny:
         """
         tmout = config.moneypenny_timeout
         expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
-        logger.info(f"Awaiting completion for '{action}': {username}")
+        self.logger.info(f"Awaiting completion for '{action}': {username}")
 
         count = 0
         while datetime.datetime.now() < expiry:
             count += 1
             completed_str = "completed"
-            logger.info(f"Checking on {username}: attempt #{count}")
+            self.logger.info(f"Checking on {username}: attempt #{count}")
             try:
                 finito = await self.check_completed(username)
             except Exception as exc:
-                logger.error(f"{action}: {username} failed: {exc}")
+                self.logger.error(f"{action}: {username} failed: {exc}")
                 completed_str = "failed"
                 finito = True
             if finito:
-                logger.info(
+                self.logger.info(
                     f"Order '{action}' {completed_str} for {username}:"
                     " tidying up"
                 )
                 await self.k8s_client.delete_objects(username)
-                logger.info(
+                self.logger.info(
                     f"Tidied up after '{action}' for {username};"
                     " awaiting further instructions"
                 )
@@ -178,8 +184,8 @@ class Moneypenny:
 
         # Timed out
         msg = f"Pod '{action}' for {username} did not complete in {tmout}s"
-        logger.error(msg)
-        logger.info(f"Attempting tidy-up for {username}")
+        self.logger.error(msg)
+        self.logger.info(f"Attempting tidy-up for {username}")
         await self.k8s_client.delete_objects(username)
         raise NoMrBondIExpectYouToDie(msg)
 
