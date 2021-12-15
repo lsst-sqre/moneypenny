@@ -26,7 +26,9 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-async def app(mock_kubernetes: MockKubernetesApi) -> AsyncIterator[FastAPI]:
+async def app(
+    mock_kubernetes: MockKubernetesApi, podinfo: Path
+) -> AsyncIterator[FastAPI]:
     """Return a configured test application.
 
     Wraps the application in a lifespan manager so that startup and shutdown
@@ -55,6 +57,19 @@ def dossier() -> Dossier:
         uid=1007,
         groups=[Group(name="doubleos", id=500), Group(name="staff", id=200)],
     )
+
+
+@pytest.fixture
+def podinfo(tmp_path: Path) -> Iterator[Path]:
+    """Store some mock Kubernetes pod information and override config."""
+    orig_podinfo_dir = config.podinfo_dir
+    podinfo_dir = tmp_path / "podinfo"
+    podinfo_dir.mkdir()
+    (podinfo_dir / "name").write_text("moneypenny-78547dcf97-9xqq8")
+    (podinfo_dir / "uid").write_text("00386592-214f-40c5-88e1-b9657d53a7c6")
+    config.podinfo_dir = str(podinfo_dir)
+    yield podinfo_dir
+    config.podinfo_dir = orig_podinfo_dir
 
 
 @pytest.fixture

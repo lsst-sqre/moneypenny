@@ -12,6 +12,7 @@ from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1ObjectMeta,
+    V1OwnerReference,
     V1Pod,
     V1PodSecurityContext,
     V1PodSpec,
@@ -79,6 +80,14 @@ async def test_route_commission(
                 metadata=V1ObjectMeta(
                     name=f"{dossier.username}-pod",
                     namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 spec=V1PodSpec(
                     automount_service_account_token=False,
@@ -177,6 +186,14 @@ async def test_route_retire(
                 metadata=V1ObjectMeta(
                     name=f"{dossier.username}-pod",
                     namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 spec=V1PodSpec(
                     automount_service_account_token=False,

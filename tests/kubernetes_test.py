@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import yaml
+from kubernetes_asyncio.client import V1OwnerReference
 
 from moneypenny.config import config
 from moneypenny.kubernetes import KubernetesClient
@@ -64,7 +65,17 @@ def test_make_pod(app: FastAPI, dossier: Dossier) -> None:
         containers=containers,
         dossier=dossier,
     )
+
+    # Check the metadata.
     assert pod.metadata.name == f"{dossier.username}-pod"
+    assert pod.metadata.owner_references == [
+        V1OwnerReference(
+            api_version="v1",
+            kind="Pod",
+            name="moneypenny-78547dcf97-9xqq8",
+            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+        )
+    ]
 
 
 def test_make_configmap(app: FastAPI, dossier: Dossier) -> None:

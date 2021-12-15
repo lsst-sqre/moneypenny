@@ -15,6 +15,7 @@ from kubernetes_asyncio.client import (
     V1ConfigMapVolumeSource,
     V1LocalObjectReference,
     V1ObjectMeta,
+    V1OwnerReference,
     V1Pod,
     V1PodSecurityContext,
     V1PodSpec,
@@ -31,6 +32,25 @@ from .models import Dossier
 namespace_file: str = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 logger = structlog.get_logger(__name__)
+
+
+def _read_pod_info(filename: str) -> str:
+    """Read the file containing some information about our current pod.
+
+    This data is provided as files mounted into the container by Kubernetes.
+
+    Parameters
+    ----------
+    filename : `str`
+        Filename to read in ``/etc/podinfo``.  The list is available in the
+        Helm chart.
+
+    Returns
+    -------
+    contents : `str`
+        Contents of that file.
+    """
+    return (Path(config.podinfo_dir) / filename).read_text()
 
 
 def _name_object(username: str, type: str) -> str:
@@ -209,7 +229,18 @@ class KubernetesClient:
             pull_secret_name=pull_secret_name,
         )
         pname = _name_object(username, "pod")
-        md = V1ObjectMeta(name=pname, namespace=self.namespace)
+        md = V1ObjectMeta(
+            name=pname,
+            namespace=self.namespace,
+            owner_references=[
+                V1OwnerReference(
+                    api_version="v1",
+                    kind="Pod",
+                    name=_read_pod_info("name"),
+                    uid=_read_pod_info("uid"),
+                )
+            ],
+        )
         pod = V1Pod(metadata=md, spec=spec)
         return pod
 
