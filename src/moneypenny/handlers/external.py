@@ -1,5 +1,7 @@
 """Handlers for the app's external root, ``/moneypenny/``."""
 
+from urllib.parse import urlparse
+
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -126,7 +128,12 @@ async def post_commission(
         action="commission",
         username=commission.username,
     )
-    return request.url_for("get_user", username=commission.username)
+    url = request.url_for("get_user", username=commission.username)
+    if getattr(request.state, "forwarded_proto", None):
+        proto = request.state.forwarded_proto
+        return urlparse(url)._replace(scheme=proto).geturl()
+    else:
+        return url
 
 
 @external_router.post(
@@ -152,4 +159,9 @@ async def post_retire(
         action="retire",
         username=commission.username,
     )
-    return request.url_for("get_user", username=commission.username)
+    url = request.url_for("get_user", username=commission.username)
+    if getattr(request.state, "forwarded_proto", None):
+        proto = request.state.forwarded_proto
+        return urlparse(url)._replace(scheme=proto).geturl()
+    else:
+        return url
