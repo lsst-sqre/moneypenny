@@ -2,19 +2,25 @@
 
 from typing import Optional
 
+from fastapi import Depends
+from safir.dependencies.logger import logger_dependency
+from structlog.stdlib import BoundLogger
+
 from .kubernetes import KubernetesClient
 from .moneypenny import Moneypenny
 
 
 class MoneypennyDependency:
-    """Maintains a singleton Moneypenny class used by all handlers."""
+    """Constructs a Moneypenny object that shares a Kubernetes client."""
 
     def __init__(self) -> None:
-        self.moneypenny: Optional[Moneypenny] = None
+        self.k8s_client: Optional[KubernetesClient] = None
 
-    async def __call__(self) -> Moneypenny:
-        assert self.moneypenny, "moneypenny_dependency not initialized"
-        return self.moneypenny
+    async def __call__(
+        self, logger: BoundLogger = Depends(logger_dependency)
+    ) -> Moneypenny:
+        assert self.k8s_client, "moneypenny_dependency not initialized"
+        return Moneypenny(self.k8s_client, logger)
 
     async def initialize(self) -> None:
         """Initialize the dependency.
@@ -22,13 +28,12 @@ class MoneypennyDependency:
         This must be called during application startup.
         """
         self.k8s_client = await KubernetesClient.create()
-        self.moneypenny = Moneypenny(self.k8s_client)
 
     async def aclose(self) -> None:
         """Cleanly close resources used by the Moneypenny singleton."""
-        if self.moneypenny:
+        if self.k8s_client:
             await self.k8s_client.aclose()
-            self.moneypenny = None
+            self.k8s_client = None
 
 
 moneypenny_dependency = MoneypennyDependency()

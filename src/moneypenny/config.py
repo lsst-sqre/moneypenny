@@ -66,6 +66,9 @@ class Configuration:
     """Path to Moneypenny's quip file.  Leave at default in normal operation.
     """
 
+    podinfo_dir: str = os.getenv("MONEYPENNY_PODINFO_DIR", "/etc/podinfo")
+    """Path at which Kubernetes has mounted the pod metadata files."""
+
     moneypenny_timeout: int = int(os.getenv("MONEYPENNY_TIMEOUT") or "300")
     """Timeout (in seconds) to wait for all containers in the action pod to
     complete.  Defaults to 300.

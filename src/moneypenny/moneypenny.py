@@ -6,9 +6,8 @@ import asyncio
 import datetime
 import random
 from math import log
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING
 
-import structlog
 import yaml
 
 from .config import config
@@ -17,20 +16,27 @@ from .exceptions import (
     NoMrBondIExpectYouToDie,
     NonsensicalOrderError,
 )
-from .kubernetes import KubernetesClient
 from .models import Dossier
 
-__all__ = ["Moneypenny"]
+if TYPE_CHECKING:
+    from typing import Any, Dict, List, Optional
 
-logger = structlog.get_logger(__name__)
+    from structlog.stdlib import BoundLogger
+
+    from .kubernetes import KubernetesClient
+
+__all__ = ["Moneypenny"]
 
 
 class Moneypenny:
     """Moneypenny provides the high-level interface for administrative
     tasks within the Kubernetes cluster."""
 
-    def __init__(self, k8s_client: KubernetesClient) -> None:
+    def __init__(
+        self, k8s_client: KubernetesClient, logger: BoundLogger
+    ) -> None:
         self.k8s_client = k8s_client
+        self.logger = logger
 
     def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to
@@ -85,19 +91,9 @@ class Moneypenny:
         return vols
 
     async def dispatch_order(self, action: str, dossier: Dossier) -> None:
-        """Start a background task to carry out an order.
+        """Start processing an order.
 
-        This is done instead of using FastAPI's ``BackgroundTasks`` directly
-        because httpx's ``AsyncClient`` blocks return from a call to a test
-        app until all background tasks have completed, which isn't the
-        behavior we want to test.  This technique was taken from
-        https://stackoverflow.com/questions/68542054/
-        """
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.execute_order(action, dossier))
-
-    async def execute_order(self, action: str, dossier: Dossier) -> None:
-        """Carry out an order based on standing orders and the dossier
+        Carry out an order based on standing orders and the dossier
         supplied.  This amounts to asking our Kubernetes client to create
         a ConfigMap from the dossier, and then creating a pod with
         containers from the list of containers specified in the standing
@@ -109,60 +105,89 @@ class Moneypenny:
 
         Parameters
         ----------
-        action: The action to execute.
-        dossier: Dossier associated with the order for the user.
-
+        action : `str`
+            The action to execute.
+        dossier : `moneypenny.models.Dossier`
+            Dossier associated with the order for the user.
         """
         username = dossier.username
-        logger.info(f"Submitting order '{action}' for {username}")
+        self.logger.info(f"Submitting order '{action}' for {username}")
         volumes = self._read_volumes()
         containers = self._read_order(action)
         if not containers:
-            logger.warning("Empty order for {action}")
+            self.logger.warning("Empty order for {action}")
             return
-        pull_secret_name = config.docker_secret_name
         await self.k8s_client.make_objects(
             username=username,
             containers=containers,
             volumes=volumes,
             dossier=dossier,
-            pull_secret_name=pull_secret_name,
+            pull_secret_name=config.docker_secret_name,
         )
+
+    async def wait_for_order(self, action: str, username: str) -> None:
+        """Start a background task to wait for order completion.
+
+        This is done instead of using FastAPI's ``BackgroundTasks`` directly
+        because httpx's ``AsyncClient`` blocks return from a call to a test
+        app until all background tasks have completed, which isn't the
+        behavior we want to test.  This technique was taken from
+        https://stackoverflow.com/questions/68542054/
+        """
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._wait_for_order(action, username))
+
+    async def _wait_for_order(self, action: str, username: str) -> None:
+        """Wait for an order to complete.
+
+        This is the internal implementation of `wait_for_order`.  Wait for a
+        running pod for a given user to complete and then clean up the
+        resources.
+
+        Parameters
+        ----------
+        action : `str`
+            The action in progress, for logging.
+        username : `str`
+            The username whose pod we're waiting for.
+        """
         tmout = config.moneypenny_timeout
         expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
-        # Wait for order to complete
-        logger.info(f"Awaiting completion for '{action}': {username}")
+        self.logger.info(f"Awaiting completion for '{action}': {username}")
+
         count = 0
         while datetime.datetime.now() < expiry:
             count += 1
             completed_str = "completed"
-            logger.info(f"Checking on {username}: attempt #{count}")
+            self.logger.info(f"Checking on {username}: attempt #{count}")
             try:
                 finito = await self.check_completed(username)
             except Exception as exc:
-                logger.error(f"{action}: {username} failed: {exc}")
+                self.logger.error(f"{action}: {username} failed: {exc}")
                 completed_str = "failed"
                 finito = True
             if finito:
-                logger.info(
-                    f"Order '{action}' {completed_str} for {username}: "
-                    + "tidying up."
+                self.logger.info(
+                    f"Order '{action}' {completed_str} for {username}:"
+                    " tidying up"
                 )
                 await self.k8s_client.delete_objects(username)
-                logger.info(
+                self.logger.info(
                     f"Tidied up after '{action}' for {username};"
-                    + " awaiting further instructions."
+                    " awaiting further instructions"
                 )
                 return
+
             # logarithmic backoff on wait
             assert count < 10
             await asyncio.sleep(int(log(count)))
+
         # Timed out
-        estr = f"Pod '{action}' for {username} did not complete in {tmout}s"
-        logger.exception(estr)
-        logger.info(f"Attempting tidy-up for {username}.")
+        msg = f"Pod '{action}' for {username} did not complete in {tmout}s"
+        self.logger.error(msg)
+        self.logger.info(f"Attempting tidy-up for {username}")
         await self.k8s_client.delete_objects(username)
-        raise NoMrBondIExpectYouToDie(estr)
+        raise NoMrBondIExpectYouToDie(msg)
 
     async def check_completed(self, username: str) -> bool:
         """Check on the completion status of an order's execution.

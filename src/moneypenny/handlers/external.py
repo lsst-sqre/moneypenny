@@ -5,9 +5,10 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     HTTPException,
+    Request,
     Response,
 )
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from safir.metadata import get_metadata
 
 from ..config import config
@@ -105,46 +106,50 @@ async def _check_conflict(username: str, moneypenny: Moneypenny) -> None:
 @external_router.post(
     "/commission",
     description="Perform provisioning steps with the details from the body",
-    response_class=PlainTextResponse,
+    response_class=RedirectResponse,
     responses={
         409: {"description": "Commissioning for user already in progress"},
     },
-    status_code=202,
+    status_code=303,
     summary="Provision user",
 )
 async def post_commission(
     commission: Dossier,
+    request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
 ) -> str:
     await _check_conflict(commission.username, moneypenny)
+    await moneypenny.dispatch_order(action="commission", dossier=commission)
     background_tasks.add_task(
-        moneypenny.dispatch_order,
+        moneypenny.wait_for_order,
         action="commission",
-        dossier=commission,
+        username=commission.username,
     )
-    return f"Commissioning {commission.username}"
+    return request.url_for("get_user", username=commission.username)
 
 
 @external_router.post(
     "/retire",
     description="Perform deprovisioning steps with the details from the body",
-    response_class=PlainTextResponse,
+    response_class=RedirectResponse,
     responses={
         409: {"description": "Dossiering for user already in progress"},
     },
-    status_code=202,
+    status_code=303,
     summary="Deprovision user",
 )
 async def post_retire(
     commission: Dossier,
+    request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
 ) -> str:
     await _check_conflict(commission.username, moneypenny)
+    await moneypenny.dispatch_order(action="commission", dossier=commission)
     background_tasks.add_task(
-        moneypenny.dispatch_order,
+        moneypenny.wait_for_order,
         action="retire",
-        dossier=commission,
+        username=commission.username,
     )
-    return f"Retiring {commission.username}"
+    return request.url_for("get_user", username=commission.username)

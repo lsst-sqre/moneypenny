@@ -25,6 +25,7 @@ configure_logging(
     profile=config.profile,
     log_level=config.log_level,
     name=config.logger_name,
+    add_timestamp=True,
 )
 
 app = FastAPI()

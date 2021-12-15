@@ -12,6 +12,7 @@ from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1ObjectMeta,
+    V1OwnerReference,
     V1Pod,
     V1PodSecurityContext,
     V1PodSpec,
@@ -19,6 +20,7 @@ from kubernetes_asyncio.client import (
     V1Volume,
 )
 
+from tests.support.constants import TEST_HOSTNAME
 from tests.support.kubernetes import assert_kubernetes_objects_are
 
 if TYPE_CHECKING:
@@ -26,6 +28,11 @@ if TYPE_CHECKING:
 
     from moneypenny.models import Dossier
     from tests.support.kubernetes import MockKubernetesApi
+
+
+def url_for(partial_url: str) -> str:
+    """Return the full URL for a partial URL."""
+    return f"https://{TEST_HOSTNAME}/moneypenny/{partial_url}"
 
 
 @pytest.mark.asyncio
@@ -43,7 +50,8 @@ async def test_route_commission(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/commission", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
 
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code == 202
@@ -54,7 +62,16 @@ async def test_route_commission(
         [
             V1ConfigMap(
                 metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-cm", namespace="default"
+                    name=f"{dossier.username}-cm",
+                    namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 data={
                     "dossier.json": json.dumps(
@@ -72,6 +89,14 @@ async def test_route_commission(
                 metadata=V1ObjectMeta(
                     name=f"{dossier.username}-pod",
                     namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 spec=V1PodSpec(
                     automount_service_account_token=False,
@@ -140,7 +165,8 @@ async def test_route_retire(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/retire", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
 
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code == 202
@@ -151,7 +177,16 @@ async def test_route_retire(
         [
             V1ConfigMap(
                 metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-cm", namespace="default"
+                    name=f"{dossier.username}-cm",
+                    namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 data={
                     "dossier.json": json.dumps(
@@ -169,6 +204,14 @@ async def test_route_retire(
                 metadata=V1ObjectMeta(
                     name=f"{dossier.username}-pod",
                     namespace="default",
+                    owner_references=[
+                        V1OwnerReference(
+                            api_version="v1",
+                            kind="Pod",
+                            name="moneypenny-78547dcf97-9xqq8",
+                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                        )
+                    ],
                 ),
                 spec=V1PodSpec(
                     automount_service_account_token=False,
@@ -237,7 +280,8 @@ async def test_simultaneous_orders(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     r = await client.post("/moneypenny/commission", json=dossier.dict())
-    assert r.status_code == 202
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(dossier.username)
     r = await client.post("/moneypenny/commission", json=dossier.dict())
     assert r.status_code == 409
 
