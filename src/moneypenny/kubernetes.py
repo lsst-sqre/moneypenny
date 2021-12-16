@@ -160,6 +160,7 @@ class KubernetesClient:
         pull_secret_name: name of the secret in the current namespace
           (if any) used to pull Docker images.
         """
+        await self.delete_objects(username)
         pod = self._make_pod(
             username=username,
             volumes=volumes,
@@ -182,30 +183,28 @@ class KubernetesClient:
             status = await self.v1.create_namespaced_pod(self.namespace, pod)
         except ApiException as e:
             self.logger.exception("Exception creating pod")
+            try:
+                await self._configmap_delete(username)
+            except K8sApiException:
+                msg = f"Failed to delete configmap for {username}"
+                self.logger.exception(msg)
             raise K8sApiException(e)
         self.logger.debug(f"Pod for {username} created: {status}")
 
     async def delete_objects(self, username: str) -> None:
-        """Delete both the pod and its associated configmap, given a
-        username.
+        """Delete the Pod and ConfigMap for a user.
 
         Parameters
         ----------
-        name: Username for the pod and configmap to delete.
+        username : `str`
+            Username for the pod and configmap to delete.
 
         Raises
         ------
-        K8sApiException if the deletion failed.
+        moneypenny.exceptions.K8sApiException
+            If the deletion failed.
         """
-        # Do the configmap first, because we may get here as a result of
-        #  a pod failure, and so the pod_delete will throw an error if it's
-        #  already gone or never existed in the first place.
-        try:
-            await self._configmap_delete(username)
-        except Exception as exc:
-            self.logger.error(
-                f"Deleting configmap for {username} failed: {exc}"
-            )
+        await self._configmap_delete(username)
         await self._pod_delete(username)
 
     async def check_pod_completed(self, username: str) -> bool:
@@ -309,11 +308,8 @@ class KubernetesClient:
                 ),
             )
         )
-        sec_ctx = V1PodSecurityContext(
-            # This will largely be overridden by init containers
-            run_as_group=1000,
-            run_as_user=1000,
-        )
+        # This will largely be overridden by init containers.
+        sec_ctx = V1PodSecurityContext(run_as_group=1000, run_as_user=1000)
         pod_spec = V1PodSpec(
             automount_service_account_token=False,
             containers=[main_container],
@@ -376,9 +372,13 @@ class KubernetesClient:
                 name=cmname, namespace=self.namespace
             )
         except ApiException as e:
-            self.logger.exception("Exception deleting configmap")
-            raise K8sApiException(e)
-        self.logger.debug(f"Configmap {cmname} deleted: {status}")
+            if e.status == 404:
+                self.logger.info(f"Configmap {cmname} already deleted")
+            else:
+                self.logger.exception("Exception deleting configmap")
+                raise K8sApiException(e)
+        else:
+            self.logger.debug(f"Configmap {cmname} deleted: {status}")
 
     async def _pod_delete(self, username: str) -> None:
         """Delete the pod for the given username."""
@@ -386,7 +386,11 @@ class KubernetesClient:
         pname = _name_object(username, "pod")
         try:
             status = await self.v1.delete_namespaced_pod(pname, self.namespace)
-        except ApiException as exc:
-            self.logger.exception("Exception deleting pod")
-            raise K8sApiException(exc)
-        self.logger.debug(f"Pod {pname} deleted: {status}")
+        except ApiException as e:
+            if e.status == 404:
+                self.logger.info(f"Pod {pname} already deleted")
+            else:
+                self.logger.exception("Exception deleting pod")
+                raise K8sApiException(e)
+        else:
+            self.logger.debug(f"Pod {pname} deleted: {status}")
