@@ -179,7 +179,6 @@ class Moneypenny:
                 return
 
             # logarithmic backoff on wait
-            assert count < 10
             await asyncio.sleep(int(log(count)))
 
         # Timed out
