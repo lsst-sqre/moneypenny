@@ -41,4 +41,9 @@ def test_read_volumes(app: FastAPI) -> None:
     """Ensure we read the (empty) volume list from the order file."""
     moneypenny = Moneypenny(MagicMock(), structlog.get_logger(__name__))
     volumes = moneypenny._read_volumes()
-    assert not volumes and volumes is not None
+    assert volumes == [
+        {
+            "name": "homedirs",
+            "nfs": {"path": "/homedirs", "server": "10.10.10.10"},
+        }
+    ]

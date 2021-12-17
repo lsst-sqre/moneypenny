@@ -111,10 +111,14 @@ async def test_route_commission(
                             },
                             "volumeMounts": [
                                 {
+                                    "mountPath": "/homedirs",
+                                    "name": "homedirs",
+                                },
+                                {
                                     "mountPath": "/opt/dossier",
                                     "name": f"dossier-{dossier.username}-vol",
                                     "readOnly": True,
-                                }
+                                },
                             ],
                         }
                     ],
@@ -125,13 +129,20 @@ async def test_route_commission(
                         run_as_group=1000, run_as_user=1000
                     ),
                     volumes=[
+                        {
+                            "name": "homedirs",
+                            "nfs": {
+                                "server": "10.10.10.10",
+                                "path": "/homedirs",
+                            },
+                        },
                         V1Volume(
                             name=f"dossier-{dossier.username}-vol",
                             config_map=V1ConfigMapVolumeSource(
                                 default_mode=0o644,
                                 name=f"{dossier.username}-cm",
                             ),
-                        )
+                        ),
                     ],
                 ),
                 status=V1PodStatus(phase="Running"),
@@ -240,13 +251,20 @@ async def test_route_retire(
                         run_as_group=1000, run_as_user=1000
                     ),
                     volumes=[
+                        {
+                            "name": "homedirs",
+                            "nfs": {
+                                "server": "10.10.10.10",
+                                "path": "/homedirs",
+                            },
+                        },
                         V1Volume(
                             name=f"dossier-{dossier.username}-vol",
                             config_map=V1ConfigMapVolumeSource(
                                 default_mode=0o644,
                                 name=f"{dossier.username}-cm",
                             ),
-                        )
+                        ),
                     ],
                 ),
                 status=V1PodStatus(phase="Running"),
