@@ -90,7 +90,7 @@ class Moneypenny:
             pass
         return vols
 
-    async def dispatch_order(self, action: str, dossier: Dossier) -> None:
+    async def dispatch_order(self, action: str, dossier: Dossier) -> bool:
         """Start processing an order.
 
         Carry out an order based on standing orders and the dossier
@@ -109,14 +109,21 @@ class Moneypenny:
             The action to execute.
         dossier : `moneypenny.models.Dossier`
             Dossier associated with the order for the user.
+
+        Returns
+        -------
+        container_started : `bool`
+            Whether a container needed to be started for this order.  If this
+            returns `False`, the action should be considered already
+            complete.
         """
         username = dossier.username
         self.logger.info(f"Submitting order '{action}' for {username}")
         volumes = self._read_volumes()
         containers = self._read_order(action)
         if not containers:
-            self.logger.warning("Empty order for {action}")
-            return
+            self.logger.info("Empty order for {action}, nothing to do")
+            return False
         await self.k8s_client.make_objects(
             username=username,
             containers=containers,
@@ -124,6 +131,7 @@ class Moneypenny:
             dossier=dossier,
             pull_secret_name=config.docker_secret_name,
         )
+        return True
 
     async def wait_for_order(self, action: str, username: str) -> None:
         """Start a background task to wait for order completion.

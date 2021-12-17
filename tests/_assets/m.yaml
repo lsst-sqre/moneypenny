@@ -8,13 +8,7 @@ commission:
     volumeMounts:
       - mountPath: /homedirs
         name: homedirs
-retire:
-  - name: farthing
-    image: lsstsqre/farthing
-    securityContext:
-      runAsUser: 1000
-      runAsNonRootUser: true
-      allowPrivilegeEscalation: False
+retire: []
 volumes:
   - name: homedirs
     nfs:
