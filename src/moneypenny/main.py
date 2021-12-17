@@ -51,3 +51,8 @@ async def startup_event() -> None:
     logger = structlog.get_logger(config.logger_name)
     app.add_middleware(XForwardedMiddleware)
     await moneypenny_dependency.initialize(logger)
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    await moneypenny_dependency.aclose()

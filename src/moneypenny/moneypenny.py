@@ -31,9 +31,11 @@ class Moneypenny:
     """Moneypenny provides the high-level interface for administrative
     tasks within the Kubernetes cluster."""
 
-    def __init__(self, logger: BoundLogger) -> None:
+    def __init__(
+        self, k8s_client: KubernetesClient, logger: BoundLogger
+    ) -> None:
+        self.k8s_client = k8s_client
         self.logger = logger
-        self.k8s_client = KubernetesClient(logger)
 
     def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to
