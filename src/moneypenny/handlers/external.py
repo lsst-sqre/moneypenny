@@ -153,7 +153,7 @@ async def post_retire(
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
 ) -> str:
     await _check_conflict(commission.username, moneypenny)
-    await moneypenny.dispatch_order(action="commission", dossier=commission)
+    await moneypenny.dispatch_order(action="retire", dossier=commission)
     background_tasks.add_task(
         moneypenny.wait_for_order,
         action="retire",
