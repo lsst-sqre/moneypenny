@@ -1,12 +1,10 @@
 """FastAPI dependencies for Moneypenny."""
 
-from typing import AsyncIterator
-
 from fastapi import Depends
 from safir.dependencies.logger import logger_dependency
 from structlog.stdlib import BoundLogger
 
-from .kubernetes import KubernetesClient, initialize_kubernetes
+from .kubernetes import initialize_kubernetes
 from .moneypenny import Moneypenny
 
 
@@ -15,9 +13,8 @@ class MoneypennyDependency:
 
     async def __call__(
         self, logger: BoundLogger = Depends(logger_dependency)
-    ) -> AsyncIterator[Moneypenny]:
-        async with KubernetesClient(logger) as k8s_client:
-            yield Moneypenny(k8s_client, logger)
+    ) -> Moneypenny:
+        return Moneypenny(logger)
 
     async def initialize(self, logger: BoundLogger) -> None:
         """Initialize the dependency.

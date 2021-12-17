@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import kubernetes_asyncio
 import pytest
@@ -79,7 +79,7 @@ def mock_kubernetes() -> Iterator[MockKubernetesApi]:
     with patch.object(moneypenny.kubernetes, "CoreV1Api") as mock_class:
         mock_class.return_value = mock_api
         with patch.object(moneypenny.kubernetes, "ApiClient") as mock_client:
-            mock_client.return_value = Mock(spec=ApiClient)
+            mock_client.return_value = MagicMock(spec=ApiClient)
             with patch.object(kubernetes_asyncio, "config") as mock_config:
                 mock_config.load_incluster_config = Mock()
                 yield mock_api

@@ -16,14 +16,13 @@ from .exceptions import (
     NoMrBondIExpectYouToDie,
     NonsensicalOrderError,
 )
+from .kubernetes import KubernetesClient
 from .models import Dossier
 
 if TYPE_CHECKING:
     from typing import Any, Dict, List, Optional
 
     from structlog.stdlib import BoundLogger
-
-    from .kubernetes import KubernetesClient
 
 __all__ = ["Moneypenny"]
 
@@ -32,11 +31,9 @@ class Moneypenny:
     """Moneypenny provides the high-level interface for administrative
     tasks within the Kubernetes cluster."""
 
-    def __init__(
-        self, k8s_client: KubernetesClient, logger: BoundLogger
-    ) -> None:
-        self.k8s_client = k8s_client
+    def __init__(self, logger: BoundLogger) -> None:
         self.logger = logger
+        self.k8s_client = KubernetesClient(logger)
 
     def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to

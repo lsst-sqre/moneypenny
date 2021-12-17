@@ -28,8 +28,7 @@ from .exceptions import K8sApiException, OperationFailed, PodNotFound
 from .models import Dossier
 
 if TYPE_CHECKING:
-    from types import TracebackType
-    from typing import Any, Dict, List, Literal, Optional, Type
+    from typing import Any, Dict, List, Optional
 
     from structlog.stdlib import BoundLogger
 
@@ -117,24 +116,6 @@ class KubernetesClient:
     def __init__(self, logger: BoundLogger) -> None:
         self.logger = logger
         self.namespace = read_namespace(logger)
-        self.api = ApiClient()
-        self.v1 = CoreV1Api(self.api)
-
-    async def __aenter__(self) -> KubernetesClient:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> Literal[False]:
-        await self.aclose()
-        return False
-
-    async def aclose(self) -> None:
-        """Close the Kubernetes API client."""
-        await self.api.close()
 
     async def make_objects(
         self,
@@ -160,7 +141,6 @@ class KubernetesClient:
         pull_secret_name: name of the secret in the current namespace
           (if any) used to pull Docker images.
         """
-        await self.delete_objects(username)
         pod = self._make_pod(
             username=username,
             volumes=volumes,
@@ -169,27 +149,33 @@ class KubernetesClient:
             pull_secret_name=pull_secret_name,
         )
         dossier_cm = self._create_dossier_configmap(dossier)
-        self.logger.info(f"Creating configmap for {username}")
-        try:
-            status = await self.v1.create_namespaced_config_map(
-                self.namespace, dossier_cm
-            )
-        except ApiException as e:
-            self.logger.exception("Exception creating configmap")
-            raise K8sApiException(e)
-        self.logger.debug(f"Configmap for {username} created: {status}")
-        self.logger.info(f"Creating pod for {username}")
-        try:
-            status = await self.v1.create_namespaced_pod(self.namespace, pod)
-        except ApiException as e:
-            self.logger.exception("Exception creating pod")
+
+        async with ApiClient() as api:
+            v1 = CoreV1Api(api)
+            await self._configmap_delete(v1, username)
+            await self._pod_delete(v1, username)
+
+            self.logger.info(f"Creating configmap for {username}")
             try:
-                await self._configmap_delete(username)
-            except K8sApiException:
-                msg = f"Failed to delete configmap for {username}"
-                self.logger.exception(msg)
-            raise K8sApiException(e)
-        self.logger.debug(f"Pod for {username} created: {status}")
+                status = await v1.create_namespaced_config_map(
+                    self.namespace, dossier_cm
+                )
+            except ApiException as e:
+                self.logger.exception("Exception creating configmap")
+                raise K8sApiException(e)
+            self.logger.debug(f"Configmap for {username} created: {status}")
+            self.logger.info(f"Creating pod for {username}")
+            try:
+                status = await v1.create_namespaced_pod(self.namespace, pod)
+            except ApiException as e:
+                self.logger.exception("Exception creating pod")
+                try:
+                    await self._configmap_delete(v1, username)
+                except K8sApiException:
+                    msg = f"Failed to delete configmap for {username}"
+                    self.logger.exception(msg)
+                raise K8sApiException(e)
+            self.logger.debug(f"Pod for {username} created: {status}")
 
     async def delete_objects(self, username: str) -> None:
         """Delete the Pod and ConfigMap for a user.
@@ -204,8 +190,10 @@ class KubernetesClient:
         moneypenny.exceptions.K8sApiException
             If the deletion failed.
         """
-        await self._configmap_delete(username)
-        await self._pod_delete(username)
+        async with ApiClient() as api:
+            v1 = CoreV1Api(api)
+            await self._configmap_delete(v1, username)
+            await self._pod_delete(v1, username)
 
     async def check_pod_completed(self, username: str) -> bool:
         """Return true if the pod completed successfully, false if it
@@ -226,15 +214,19 @@ class KubernetesClient:
         encountered an error, K8sApiException for some other Kubernetes error.
         """
         pname = _name_object(username, "pod")
-        try:
-            pod = await self.v1.read_namespaced_pod(pname, self.namespace)
-            status = pod.status
-        except ApiException as exc:
-            if exc.status == 404:
-                raise PodNotFound(f"Pod {pname} not found")
-            self.logger.exception("Error checking on pod completion")
-            raise K8sApiException(exc)
-        phase: str = status.phase
+
+        async with ApiClient() as api:
+            v1 = CoreV1Api(api)
+            try:
+                pod = await v1.read_namespaced_pod(pname, self.namespace)
+                phase = pod.status.phase
+                message = pod.status.message
+            except ApiException as exc:
+                if exc.status == 404:
+                    raise PodNotFound(f"Pod {pname} not found")
+                self.logger.exception("Error checking on pod completion")
+                raise K8sApiException(exc)
+
         if phase == "Succeeded":
             return True
         elif phase in ("Pending", "Running"):
@@ -243,7 +235,7 @@ class KubernetesClient:
             raise OperationFailed(f"Pod {pname} in Unknown phase")
         else:
             # phase == "Failed"
-            raise OperationFailed(f"Pod {pname} failed: {status.message}")
+            raise OperationFailed(f"Pod {pname} failed: {message}")
 
     def _make_pod(
         self,
@@ -364,12 +356,12 @@ class KubernetesClient:
                 }
             )
 
-    async def _configmap_delete(self, username: str) -> None:
+    async def _configmap_delete(self, v1: CoreV1Api, username: str) -> None:
         """Delete the ConfigMap for the given name."""
         cmname = _name_object(username, "cm")
         try:
-            status = await self.v1.delete_namespaced_config_map(
-                name=cmname, namespace=self.namespace
+            status = await v1.delete_namespaced_config_map(
+                cmname, self.namespace
             )
         except ApiException as e:
             if e.status == 404:
@@ -380,12 +372,12 @@ class KubernetesClient:
         else:
             self.logger.debug(f"Configmap {cmname} deleted: {status}")
 
-    async def _pod_delete(self, username: str) -> None:
+    async def _pod_delete(self, v1: CoreV1Api, username: str) -> None:
         """Delete the pod for the given username."""
         self.logger.info(f"Deleting pod for {username}")
         pname = _name_object(username, "pod")
         try:
-            status = await self.v1.delete_namespaced_pod(pname, self.namespace)
+            status = await v1.delete_namespaced_pod(pname, self.namespace)
         except ApiException as e:
             if e.status == 404:
                 self.logger.info(f"Pod {pname} already deleted")
