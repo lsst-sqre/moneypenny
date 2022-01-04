@@ -205,9 +205,9 @@ class KubernetesClient:
         phase: str = status.phase
         if phase == "Succeeded":
             return True
-        if phase == "Pending" or "Running":
+        elif phase in ("Pending", "Running"):
             return False
-        if phase == "Unknown":
+        elif phase == "Unknown":
             raise OperationFailed(f"Pod {pname} in Unknown phase")
         else:
             # phase == "Failed"
