@@ -1,5 +1,6 @@
 """Handlers for the app's external root, ``/moneypenny/``."""
 
+from typing import Union
 from urllib.parse import urlparse
 
 from fastapi import (
@@ -116,19 +117,24 @@ async def _check_conflict(username: str, moneypenny: Moneypenny) -> None:
     summary="Provision user",
 )
 async def post_commission(
-    commission: Dossier,
+    dossier: Dossier,
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> str:
-    await _check_conflict(commission.username, moneypenny)
-    await moneypenny.dispatch_order(action="commission", dossier=commission)
+) -> Union[str, PlainTextResponse]:
+    await _check_conflict(dossier.username, moneypenny)
+    created = await moneypenny.dispatch_order("commission", dossier)
+    if not created:
+        return PlainTextResponse("Nothing to do")
+
+    # A container was created, so we redirect to the status URL and start a
+    # background task to wait for it to complete and then clean it up.
     background_tasks.add_task(
         moneypenny.wait_for_order,
         action="commission",
-        username=commission.username,
+        username=dossier.username,
     )
-    url = request.url_for("get_user", username=commission.username)
+    url = request.url_for("get_user", username=dossier.username)
     if getattr(request.state, "forwarded_proto", None):
         proto = request.state.forwarded_proto
         return urlparse(url)._replace(scheme=proto).geturl()
@@ -147,19 +153,24 @@ async def post_commission(
     summary="Deprovision user",
 )
 async def post_retire(
-    commission: Dossier,
+    dossier: Dossier,
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> str:
-    await _check_conflict(commission.username, moneypenny)
-    await moneypenny.dispatch_order(action="commission", dossier=commission)
+) -> Union[str, PlainTextResponse]:
+    await _check_conflict(dossier.username, moneypenny)
+    created = await moneypenny.dispatch_order("retire", dossier)
+    if not created:
+        return PlainTextResponse("Nothing to do")
+
+    # A container was created, so we redirect to the status URL and start a
+    # background task to wait for it to complete and then clean it up.
     background_tasks.add_task(
         moneypenny.wait_for_order,
         action="retire",
-        username=commission.username,
+        username=dossier.username,
     )
-    url = request.url_for("get_user", username=commission.username)
+    url = request.url_for("get_user", username=dossier.username)
     if getattr(request.state, "forwarded_proto", None):
         proto = request.state.forwarded_proto
         return urlparse(url)._replace(scheme=proto).geturl()

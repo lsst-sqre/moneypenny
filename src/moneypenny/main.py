@@ -9,6 +9,7 @@ called.
 
 from importlib.metadata import metadata
 
+import structlog
 from fastapi import FastAPI
 from safir.logging import configure_logging
 from safir.middleware.x_forwarded import XForwardedMiddleware
@@ -47,8 +48,9 @@ app.mount(f"/{config.name}", _subapp)
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    logger = structlog.get_logger(config.logger_name)
     app.add_middleware(XForwardedMiddleware)
-    await moneypenny_dependency.initialize()
+    await moneypenny_dependency.initialize(logger)
 
 
 @app.on_event("shutdown")

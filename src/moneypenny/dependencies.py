@@ -3,10 +3,11 @@
 from typing import Optional
 
 from fastapi import Depends
+from kubernetes_asyncio.client import ApiClient
 from safir.dependencies.logger import logger_dependency
 from structlog.stdlib import BoundLogger
 
-from .kubernetes import KubernetesClient
+from .kubernetes import KubernetesClient, initialize_kubernetes
 from .moneypenny import Moneypenny
 
 
@@ -14,26 +15,28 @@ class MoneypennyDependency:
     """Constructs a Moneypenny object that shares a Kubernetes client."""
 
     def __init__(self) -> None:
-        self.k8s_client: Optional[KubernetesClient] = None
+        self._api_client: Optional[ApiClient] = None
 
     async def __call__(
         self, logger: BoundLogger = Depends(logger_dependency)
     ) -> Moneypenny:
-        assert self.k8s_client, "moneypenny_dependency not initialized"
-        return Moneypenny(self.k8s_client, logger)
+        assert self._api_client, "moneypenny_dependency is not initialized"
+        k8s_client = KubernetesClient(self._api_client, logger)
+        return Moneypenny(k8s_client, logger)
 
-    async def initialize(self) -> None:
+    async def initialize(self, logger: BoundLogger) -> None:
         """Initialize the dependency.
 
         This must be called during application startup.
         """
-        self.k8s_client = await KubernetesClient.create()
+        await initialize_kubernetes(logger)
+        self._api_client = ApiClient()
 
     async def aclose(self) -> None:
-        """Cleanly close resources used by the Moneypenny singleton."""
-        if self.k8s_client:
-            await self.k8s_client.aclose()
-            self.k8s_client = None
+        """Cleanly close the Kubernetes API client."""
+        if self._api_client:
+            await self._api_client.close()
+            self._api_client = None
 
 
 moneypenny_dependency = MoneypennyDependency()

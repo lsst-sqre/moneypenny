@@ -5,11 +5,12 @@ commission:
       runAsUser: 1000
       runAsNonRootUser: true
       allowPrivilegeEscalation: False
-retire:
-  - name: farthing
-    image: lsstsqre/farthing
-    securityContext:
-      runAsUser: 1000
-      runAsNonRootUser: true
-      allowPrivilegeEscalation: False
-volumes: []
+    volumeMounts:
+      - mountPath: /homedirs
+        name: homedirs
+retire: []
+volumes:
+  - name: homedirs
+    nfs:
+      server: 10.10.10.10
+      path: /homedirs
