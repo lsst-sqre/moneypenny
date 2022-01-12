@@ -3,11 +3,12 @@
 from typing import Optional
 
 from fastapi import Depends
-from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio import client
 from safir.dependencies.logger import logger_dependency
+from safir.kubernetes import initialize_kubernetes
 from structlog.stdlib import BoundLogger
 
-from .kubernetes import KubernetesClient, initialize_kubernetes
+from .kubernetes import KubernetesClient
 from .models import AgentCache
 from .moneypenny import Moneypenny
 
@@ -16,7 +17,7 @@ class MoneypennyDependency:
     """Constructs a Moneypenny object that shares a Kubernetes client."""
 
     def __init__(self) -> None:
-        self._api_client: Optional[ApiClient] = None
+        self._api_client: Optional[client.ApiClient] = None
         self._cache: AgentCache = {}
 
     async def __call__(
@@ -31,8 +32,8 @@ class MoneypennyDependency:
 
         This must be called during application startup.
         """
-        await initialize_kubernetes(logger)
-        self._api_client = ApiClient()
+        await initialize_kubernetes()
+        self._api_client = client.ApiClient()
 
     async def aclose(self) -> None:
         """Cleanly close the Kubernetes API client."""

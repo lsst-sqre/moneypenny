@@ -6,10 +6,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import kubernetes_asyncio
+from kubernetes_asyncio import client
 from kubernetes_asyncio.client import (
-    ApiClient,
-    CoreV1Api,
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1LocalObjectReference,
@@ -21,7 +19,6 @@ from kubernetes_asyncio.client import (
     V1Volume,
 )
 from kubernetes_asyncio.client.exceptions import ApiException
-from kubernetes_asyncio.config import ConfigException
 
 from .config import config
 from .exceptions import K8sApiException, OperationFailed, PodNotFound
@@ -31,21 +28,6 @@ if TYPE_CHECKING:
     from typing import Any, Dict, List, Optional
 
     from structlog.stdlib import BoundLogger
-
-
-async def initialize_kubernetes(logger: BoundLogger) -> None:
-    """Load the Kubernetes configuration.
-
-    This has to be run once per process and should be run during application
-    startup.  This function handles Kubernetes configuration independent of
-    any given Kubernetes client so that clients can be created for each
-    request.
-    """
-    try:
-        kubernetes_asyncio.config.load_incluster_config()
-    except ConfigException:
-        logger.warn("In-cluster config failed; trying kube_config")
-        await kubernetes_asyncio.config.load_kube_config()
 
 
 def read_namespace(logger: BoundLogger) -> str:
@@ -113,8 +95,10 @@ class KubernetesClient:
     used that way, `aclose` must be called when finished using the client.
     """
 
-    def __init__(self, api_client: ApiClient, logger: BoundLogger) -> None:
-        self.v1 = CoreV1Api(api_client)
+    def __init__(
+        self, api_client: client.ApiClient, logger: BoundLogger
+    ) -> None:
+        self.v1 = client.CoreV1Api(api_client)
         self.logger = logger
         self.namespace = read_namespace(logger)
 
