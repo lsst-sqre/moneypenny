@@ -17,7 +17,7 @@ from .exceptions import (
     NonsensicalOrderError,
 )
 from .kubernetes import KubernetesClient
-from .models import Dossier
+from .models import AgentCache, Dossier
 
 if TYPE_CHECKING:
     from typing import Any, Dict, List, Optional
@@ -32,10 +32,14 @@ class Moneypenny:
     tasks within the Kubernetes cluster."""
 
     def __init__(
-        self, k8s_client: KubernetesClient, logger: BoundLogger
+        self,
+        k8s_client: KubernetesClient,
+        logger: BoundLogger,
+        cache: AgentCache,
     ) -> None:
         self.k8s_client = k8s_client
         self.logger = logger
+        self.cache = cache
 
     def _read_quips(self) -> List[str]:
         """Read quips file.  This is in fortune format, which is to
@@ -114,15 +118,22 @@ class Moneypenny:
         container_started : `bool`
             Whether a container needed to be started for this order.  If this
             returns `False`, the action should be considered already
-            complete.
+            complete.  This might be because the order is empty, or it might
+            be because the order has already happened for this dossier and
+            action.
         """
         username = dossier.username
+        cache_key = f"{action}:{dossier}"
+        if self.cache.get(cache_key, None):
+            return False
         self.logger.info(f"Submitting order '{action}' for {username}")
         volumes = self._read_volumes()
         containers = self._read_order(action)
         if not containers:
             self.logger.info("Empty order for {action}, nothing to do")
+            self.cache[cache_key] = True
             return False
+
         await self.k8s_client.make_objects(
             username=username,
             containers=containers,
@@ -130,6 +141,7 @@ class Moneypenny:
             dossier=dossier,
             pull_secret_name=config.docker_secret_name,
         )
+        self.cache[cache_key] = True
         return True
 
     async def wait_for_order(self, action: str, username: str) -> None:

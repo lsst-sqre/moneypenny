@@ -8,6 +8,7 @@ from safir.dependencies.logger import logger_dependency
 from structlog.stdlib import BoundLogger
 
 from .kubernetes import KubernetesClient, initialize_kubernetes
+from .models import AgentCache
 from .moneypenny import Moneypenny
 
 
@@ -16,13 +17,14 @@ class MoneypennyDependency:
 
     def __init__(self) -> None:
         self._api_client: Optional[ApiClient] = None
+        self._cache: AgentCache = {}
 
     async def __call__(
         self, logger: BoundLogger = Depends(logger_dependency)
     ) -> Moneypenny:
         assert self._api_client, "moneypenny_dependency is not initialized"
         k8s_client = KubernetesClient(self._api_client, logger)
-        return Moneypenny(k8s_client, logger)
+        return Moneypenny(k8s_client, logger, self._cache)
 
     async def initialize(self, logger: BoundLogger) -> None:
         """Initialize the dependency.

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import kubernetes_asyncio
 import pytest
+import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 from kubernetes_asyncio.client import ApiClient
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app(
     mock_kubernetes: MockKubernetesApi, podinfo: Path
 ) -> AsyncIterator[FastAPI]:
@@ -42,7 +43,7 @@ async def app(
         yield main.app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
     base_url = f"https://{TEST_HOSTNAME}/"
@@ -60,6 +61,19 @@ def dossier() -> Dossier:
 
 
 @pytest.fixture
+def dossier2() -> Dossier:
+    return Dossier(
+        username="jb007",
+        uid=1007,
+        groups=[
+            Group(name="sudoers", id=10),
+            Group(name="doubleos", id=500),
+            Group(name="staff", id=200),
+        ],
+    )
+
+
+@pytest_asyncio.fixture
 def podinfo(tmp_path: Path) -> Iterator[Path]:
     """Store some mock Kubernetes pod information and override config."""
     orig_podinfo_dir = config.podinfo_dir
@@ -72,7 +86,7 @@ def podinfo(tmp_path: Path) -> Iterator[Path]:
     config.podinfo_dir = orig_podinfo_dir
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 def mock_kubernetes() -> Iterator[MockKubernetesApi]:
     """Replace the Kubernetes API with a mock class."""
     mock_api = MockKubernetesApi()

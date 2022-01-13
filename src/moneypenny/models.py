@@ -5,11 +5,10 @@ from typing import List
 from pydantic import BaseModel, Field
 from safir.metadata import Metadata as SafirMetadata
 
-__all__ = [
-    "Dossier",
-    "Group",
-    "Index",
-]
+__all__ = ["Dossier", "Group", "Index", "AgentCache"]
+
+
+AgentCache = dict[str, bool]
 
 
 class Group(BaseModel):
