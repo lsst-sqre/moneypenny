@@ -23,3 +23,10 @@ async def test_get_index(client: AsyncClient) -> None:
     assert isinstance(data["description"], str)
     assert isinstance(data["repository_url"], str)
     assert isinstance(data["documentation_url"], str)
+
+
+@pytest.mark.asyncio
+async def test_clear_cache(client: AsyncClient) -> None:
+    """Test ``DELETE /cache``"""
+    response = await client.delete("/cache")
+    assert response.status_code == 200

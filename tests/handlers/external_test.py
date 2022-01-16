@@ -189,20 +189,30 @@ async def test_route_retire(
 
 @pytest.mark.asyncio
 async def test_simultaneous_orders(
-    client: AsyncClient, dossier2: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
-    # We need a different dossier so that the cache doesn't just immediately
-    #  return success and defeat the whole purpose.
-    r = await client.post("/moneypenny/commission", json=dossier2.dict())
+    # We need to clear the cache, so we don't just immediately return a 200
+    r = await client.delete("/cache")
+    assert r.status_code == 200
+    r = await client.post("/moneypenny/commission", json=dossier.dict())
     assert r.status_code == 303
-    assert r.headers["Location"] == url_for(dossier2.username)
-    r = await client.post("/moneypenny/commission", json=dossier2.dict())
+    assert r.headers["Location"] == url_for(dossier.username)
+    r = await client.post("/moneypenny/commission", json=dossier.dict())
     assert r.status_code == 409
 
-    pod_name = f"{dossier2.username}-pod"
+    pod_name = f"{dossier.username}-pod"
     pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
     pod.status = V1PodStatus(phase="Succeeded")
 
     while r.status_code != 404:
-        r = await client.get(f"/moneypenny/{dossier2.username}")
+        r = await client.get(f"/moneypenny/{dossier.username}")
         await asyncio.sleep(0.5)
+
+
+@pytest.mark.asyncio
+async def test_repeated_orders(
+    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+) -> None:
+    # Since we've already seen this one, we should get an immediate 200 back.
+    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    assert r.status_code == 200

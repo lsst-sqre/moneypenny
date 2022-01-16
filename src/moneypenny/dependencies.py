@@ -40,6 +40,10 @@ class MoneypennyDependency:
             await self._api_client.close()
             self._api_client = None
 
+    async def clear_cache(self) -> None:
+        """Remove the cache contents (useful for testing)."""
+        self._cache = {}
+
 
 moneypenny_dependency = MoneypennyDependency()
 """The dependency that will return the Moneypenny singleton."""

@@ -131,6 +131,7 @@ class Moneypenny:
         containers = self._read_order(action)
         if not containers:
             self.logger.info("Empty order for {action}, nothing to do")
+            # "No action" counts as successful.
             self.cache[cache_key] = True
             return False
 
@@ -141,10 +142,9 @@ class Moneypenny:
             dossier=dossier,
             pull_secret_name=config.docker_secret_name,
         )
-        self.cache[cache_key] = True
         return True
 
-    async def wait_for_order(self, action: str, username: str) -> None:
+    async def wait_for_order(self, action: str, dossier: Dossier) -> None:
         """Start a background task to wait for order completion.
 
         This is done instead of using FastAPI's ``BackgroundTasks`` directly
@@ -154,9 +154,9 @@ class Moneypenny:
         https://stackoverflow.com/questions/68542054/
         """
         loop = asyncio.get_event_loop()
-        loop.create_task(self._wait_for_order(action, username))
+        loop.create_task(self._wait_for_order(action, dossier))
 
-    async def _wait_for_order(self, action: str, username: str) -> None:
+    async def _wait_for_order(self, action: str, dossier: Dossier) -> None:
         """Wait for an order to complete.
 
         This is the internal implementation of `wait_for_order`.  Wait for a
@@ -171,6 +171,8 @@ class Moneypenny:
             The username whose pod we're waiting for.
         """
         tmout = config.moneypenny_timeout
+        username = dossier.username
+        cache_key = f"{action}:{dossier}"
         expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
         self.logger.info(f"Awaiting completion for '{action}': {username}")
 
@@ -181,6 +183,9 @@ class Moneypenny:
             self.logger.info(f"Checking on {username}: attempt #{count}")
             try:
                 finito = await self.check_completed(username)
+                if finito:
+                    # Only set cache on successful completion
+                    self.cache[cache_key] = True
             except Exception as exc:
                 self.logger.error(f"{action}: {username} failed: {exc}")
                 completed_str = "failed"

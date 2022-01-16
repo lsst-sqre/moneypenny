@@ -60,19 +60,6 @@ def dossier() -> Dossier:
     )
 
 
-@pytest.fixture
-def dossier2() -> Dossier:
-    return Dossier(
-        username="jb007",
-        uid=1007,
-        groups=[
-            Group(name="sudoers", id=10),
-            Group(name="doubleos", id=500),
-            Group(name="staff", id=200),
-        ],
-    )
-
-
 @pytest_asyncio.fixture
 def podinfo(tmp_path: Path) -> Iterator[Path]:
     """Store some mock Kubernetes pod information and override config."""
