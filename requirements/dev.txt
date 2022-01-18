@@ -278,6 +278,7 @@ typing-extensions==4.0.1 \
     # via
     #   -c requirements/main.txt
     #   mypy
+    #   pytest-asyncio
 virtualenv==20.13.0 \
     --hash=sha256:339f16c4a86b44240ba7223d0f93a7887c3ca04b5f9c8129da7958447d079b09 \
     --hash=sha256:d8458cf8d59d0ea495ad9b34c2599487f8a7772d796f9910858376d1600dd2dd
