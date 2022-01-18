@@ -16,6 +16,7 @@ from kubernetes_asyncio.client import ApiClient
 import moneypenny.kubernetes
 from moneypenny import main
 from moneypenny.config import config
+from moneypenny.dependencies import moneypenny_dependency
 from moneypenny.models import Dossier, Group
 from tests.support.constants import TEST_HOSTNAME
 from tests.support.kubernetes import MockKubernetesApi
@@ -40,6 +41,7 @@ async def app(
     config.quips = str(assets_path / "quips.txt")
     config.moneypenny_timeout = 5
     async with LifespanManager(main.app):
+        await moneypenny_dependency.clear_cache()
         yield main.app
 
 
