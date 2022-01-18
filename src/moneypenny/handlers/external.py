@@ -130,9 +130,7 @@ async def post_commission(
     # A container was created, so we redirect to the status URL and start a
     # background task to wait for it to complete and then clean it up.
     background_tasks.add_task(
-        moneypenny.wait_for_order,
-        action="commission",
-        username=dossier.username,
+        moneypenny.wait_for_order, action="commission", dossier=dossier
     )
     url = request.url_for("get_user", username=dossier.username)
     if getattr(request.state, "forwarded_proto", None):

@@ -35,6 +35,27 @@ def url_for(partial_url: str) -> str:
     return f"https://{TEST_HOSTNAME}/moneypenny/{partial_url}"
 
 
+async def wait_for_completion(
+    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+) -> None:
+    pod_name = f"{dossier.username}-pod"
+    pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
+    pod.status = V1PodStatus(phase="Succeeded")
+
+    r = await client.get(f"/moneypenny/{dossier.username}")
+    assert r.status_code in (200, 404)
+
+    # Wait a bit for the background thread to run.  It will generally finish
+    # way faster than 5s, but this should be robust against overloaded test
+    # runners.
+    timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
+    count = 1
+    while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
+        await asyncio.sleep(log(count))
+        r = await client.get(f"/moneypenny/{dossier.username}")
+        assert r.status_code in (200, 404)
+
+
 @pytest.mark.asyncio
 async def test_route_index(client: AsyncClient) -> None:
     r = await client.get("/moneypenny/")
@@ -153,22 +174,7 @@ async def test_route_commission(
     r = await client.get(f"/moneypenny/{dossier.username}")
     assert r.status_code == 202
 
-    pod_name = f"{dossier.username}-pod"
-    pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
-    pod.status = V1PodStatus(phase="Succeeded")
-
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code in (200, 404)
-
-    # Wait a bit for the background thread to run.  It will generally finish
-    # way faster than 5s, but this should be robust against overloaded test
-    # runners.
-    timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
-    count = 1
-    while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
-        await asyncio.sleep(log(count))
-        r = await client.get(f"/moneypenny/{dossier.username}")
-        assert r.status_code in (200, 404)
+    await wait_for_completion(client, dossier, mock_kubernetes)
 
 
 @pytest.mark.asyncio
@@ -204,3 +210,15 @@ async def test_simultaneous_orders(
     while r.status_code != 404:
         r = await client.get(f"/moneypenny/{dossier.username}")
         await asyncio.sleep(0.5)
+
+
+@pytest.mark.asyncio
+async def test_repeated_orders(
+    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+) -> None:
+    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    assert r.status_code == 303
+    await wait_for_completion(client, dossier, mock_kubernetes)
+    # Since we've already seen this one, we should get an immediate 200 back.
+    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    assert r.status_code == 200

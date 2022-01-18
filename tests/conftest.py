@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import kubernetes_asyncio
 import pytest
+import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 from kubernetes_asyncio.client import ApiClient
@@ -15,6 +16,7 @@ from kubernetes_asyncio.client import ApiClient
 import moneypenny.kubernetes
 from moneypenny import main
 from moneypenny.config import config
+from moneypenny.dependencies import moneypenny_dependency
 from moneypenny.models import Dossier, Group
 from tests.support.constants import TEST_HOSTNAME
 from tests.support.kubernetes import MockKubernetesApi
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app(
     mock_kubernetes: MockKubernetesApi, podinfo: Path
 ) -> AsyncIterator[FastAPI]:
@@ -39,10 +41,11 @@ async def app(
     config.quips = str(assets_path / "quips.txt")
     config.moneypenny_timeout = 5
     async with LifespanManager(main.app):
+        await moneypenny_dependency.clear_cache()
         yield main.app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
     base_url = f"https://{TEST_HOSTNAME}/"
@@ -59,7 +62,7 @@ def dossier() -> Dossier:
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 def podinfo(tmp_path: Path) -> Iterator[Path]:
     """Store some mock Kubernetes pod information and override config."""
     orig_podinfo_dir = config.podinfo_dir
@@ -72,7 +75,7 @@ def podinfo(tmp_path: Path) -> Iterator[Path]:
     config.podinfo_dir = orig_podinfo_dir
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 def mock_kubernetes() -> Iterator[MockKubernetesApi]:
     """Replace the Kubernetes API with a mock class."""
     mock_api = MockKubernetesApi()
