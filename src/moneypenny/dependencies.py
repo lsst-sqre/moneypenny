@@ -9,8 +9,8 @@ from safir.kubernetes import initialize_kubernetes
 from structlog.stdlib import BoundLogger
 
 from .kubernetes import KubernetesClient
-from .models import AgentCache
 from .moneypenny import Moneypenny
+from .state import State
 
 
 class MoneypennyDependency:
@@ -18,14 +18,14 @@ class MoneypennyDependency:
 
     def __init__(self) -> None:
         self._api_client: Optional[client.ApiClient] = None
-        self._cache: AgentCache = {}
+        self._state: State = State()
 
     async def __call__(
         self, logger: BoundLogger = Depends(logger_dependency)
     ) -> Moneypenny:
         assert self._api_client, "moneypenny_dependency is not initialized"
         k8s_client = KubernetesClient(self._api_client, logger)
-        return Moneypenny(k8s_client, logger, self._cache)
+        return Moneypenny(k8s_client, logger, self._state)
 
     async def initialize(self, logger: BoundLogger) -> None:
         """Initialize the dependency.
@@ -34,6 +34,7 @@ class MoneypennyDependency:
         """
         await initialize_kubernetes()
         self._api_client = client.ApiClient()
+        self._state = State()
 
     async def aclose(self) -> None:
         """Cleanly close the Kubernetes API client."""
@@ -41,9 +42,9 @@ class MoneypennyDependency:
             await self._api_client.close()
             self._api_client = None
 
-    async def clear_cache(self) -> None:
-        """Remove the cache contents (useful for testing)."""
-        self._cache = {}
+    async def clear_state(self) -> None:
+        """Remove the state (useful for testing)."""
+        self._state = State()
 
 
 moneypenny_dependency = MoneypennyDependency()

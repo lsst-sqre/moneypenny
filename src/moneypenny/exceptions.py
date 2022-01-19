@@ -14,12 +14,6 @@ class NonsensicalOrderError(Exception):
     pass
 
 
-class NoMrBondIExpectYouToDie(Exception):
-    """Used when execution of an order times out."""
-
-    pass
-
-
 class OperationFailed(Exception):
     """Used when the Pod did not complete execution correctly."""
 

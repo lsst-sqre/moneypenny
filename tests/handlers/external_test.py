@@ -4,10 +4,10 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from math import log
-from typing import TYPE_CHECKING
 from unittest.mock import ANY
 
 import pytest
+from httpx import AsyncClient
 from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1ConfigMapVolumeSource,
@@ -19,14 +19,11 @@ from kubernetes_asyncio.client import (
     V1PodStatus,
     V1Volume,
 )
+from safir.testing.kubernetes import MockKubernetesApi
 
-from tests.support.constants import TEST_HOSTNAME
+from moneypenny.models import Dossier
 
-if TYPE_CHECKING:
-    from httpx import AsyncClient
-
-    from moneypenny.models import Dossier
-    from tests.support.kubernetes import MockKubernetesApi
+from ..support.constants import TEST_HOSTNAME
 
 
 def url_for(partial_url: str) -> str:
@@ -35,24 +32,26 @@ def url_for(partial_url: str) -> str:
 
 
 async def wait_for_completion(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient, username: str, mock_kubernetes: MockKubernetesApi
 ) -> None:
-    pod_name = f"{dossier.username}-pod"
+    pod_name = f"{username}-pod"
     pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
     pod.status = V1PodStatus(phase="Succeeded")
-
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code in (200, 404)
 
     # Wait a bit for the background thread to run.  It will generally finish
     # way faster than 5s, but this should be robust against overloaded test
     # runners.
     timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
-    count = 1
-    while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
+    count = 0
+    while datetime.now(tz=timezone.utc) < timeout:
+        r = await client.get(f"/moneypenny/users/{username}")
+        assert r.status_code == 200
+        data = r.json()
+        if data["status"] == "active":
+            return
+        count += 1
         await asyncio.sleep(log(count))
-        r = await client.get(f"/moneypenny/{dossier.username}")
-        assert r.status_code in (200, 404)
+    assert False, "Background thread still not finished after 5s"
 
 
 @pytest.mark.asyncio
@@ -69,12 +68,20 @@ async def test_route_index(client: AsyncClient) -> None:
 async def test_route_commission(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    assert r.headers["Location"] == url_for(dossier.username)
+    assert r.headers["Location"] == url_for(f"users/{dossier.username}")
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code == 202
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data == {
+        "username": dossier.username,
+        "status": "commissioning",
+        "last_changed": ANY,
+        "uid": dossier.uid,
+        "groups": [g.dict() for g in dossier.groups],
+    }
 
     assert mock_kubernetes.get_all_objects_for_test("ConfigMap") == [
         V1ConfigMap(
@@ -162,10 +169,7 @@ async def test_route_commission(
         )
     ]
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code == 202
-
-    await wait_for_completion(client, dossier, mock_kubernetes)
+    await wait_for_completion(client, dossier.username, mock_kubernetes)
 
 
 @pytest.mark.asyncio
@@ -173,11 +177,21 @@ async def test_route_retire(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
     """Retire is configured to not have any containers."""
-    r = await client.post("/moneypenny/retire", json=dossier.dict())
-    assert r.status_code == 200
-    assert "Nothing to do" in r.text
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    await wait_for_completion(client, dossier.username, mock_kubernetes)
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+
+    r = await client.post(
+        f"/moneypenny/users/{dossier.username}/retire", json=dossier.dict()
+    )
+    assert r.status_code == 204
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 404
 
     assert mock_kubernetes.get_all_objects_for_test("ConfigMap") == []
@@ -188,28 +202,58 @@ async def test_route_retire(
 async def test_simultaneous_orders(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    assert r.headers["Location"] == url_for(dossier.username)
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 409
 
-    pod_name = f"{dossier.username}-pod"
-    pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
-    pod.status = V1PodStatus(phase="Succeeded")
+    r = await client.post(
+        f"/moneypenny/users/{dossier.username}/retire", json=dossier.dict()
+    )
+    assert r.status_code == 409
 
-    while r.status_code != 404:
-        r = await client.get(f"/moneypenny/{dossier.username}")
-        await asyncio.sleep(0.5)
+    await wait_for_completion(client, dossier.username, mock_kubernetes)
 
 
 @pytest.mark.asyncio
 async def test_repeated_orders(
     client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    await wait_for_completion(client, dossier, mock_kubernetes)
-    # Since we've already seen this one, we should get an immediate 200 back.
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+
+    await wait_for_completion(client, dossier.username, mock_kubernetes)
+
+    # Since we've already seen this one, there should be no status change.
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+
+    # But if we change something about the dossier, we should go through
+    # commissioning again.
+    new_dossier = dossier.dict()
+    new_dossier["uid"] = dossier.uid + 1
+    r = await client.post("/moneypenny/users", json=new_dossier)
+    assert r.status_code == 303
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+    assert data["uid"] == new_dossier["uid"]
+
+    await wait_for_completion(client, dossier.username, mock_kubernetes)
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+    assert data["uid"] == new_dossier["uid"]

@@ -105,7 +105,7 @@ class KubernetesClient:
     async def make_objects(
         self,
         username: str,
-        volumes: List[Optional[Dict[str, Any]]],
+        volumes: List[Dict[str, Any]],
         containers: List[Dict[str, Any]],
         dossier: Dossier,
         pull_secret_name: Optional[str] = None,
@@ -218,7 +218,7 @@ class KubernetesClient:
     def _make_pod(
         self,
         username: str,
-        volumes: List[Optional[Dict[str, Any]]],
+        volumes: List[Dict[str, Any]],
         containers: List[Dict[str, Any]],
         dossier: Dossier,
         pull_secret_name: Optional[str] = None,
@@ -249,7 +249,7 @@ class KubernetesClient:
     def _make_pod_spec(
         self,
         username: str,
-        volumes: List[Optional[Dict[str, Any]]],
+        volumes: List[Dict[str, Any]],
         containers: List[Dict[str, Any]],
         dossier: Dossier,
         pull_secret_name: Optional[str] = None,

@@ -38,7 +38,7 @@ async def app(
     config.quips = str(assets_path / "quips.txt")
     config.moneypenny_timeout = 5
     async with LifespanManager(main.app):
-        await moneypenny_dependency.clear_cache()
+        await moneypenny_dependency.clear_state()
         yield main.app
 
 
