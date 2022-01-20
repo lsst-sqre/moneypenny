@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from datetime import datetime, timedelta, timezone
-from math import log
 from unittest.mock import ANY
 
 import pytest
@@ -24,6 +21,7 @@ from safir.testing.kubernetes import MockKubernetesApi
 from moneypenny.models import Dossier
 
 from ..support.constants import TEST_HOSTNAME
+from ..support.kubernetes import MockKubernetesWatch
 
 
 def url_for(partial_url: str) -> str:
@@ -32,26 +30,24 @@ def url_for(partial_url: str) -> str:
 
 
 async def wait_for_completion(
-    client: AsyncClient, username: str, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    username: str,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     pod_name = f"{username}-pod"
     pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
     pod.status = V1PodStatus(phase="Succeeded")
+    await mock_kubernetes_watch.signal_change()
 
-    # Wait a bit for the background thread to run.  It will generally finish
-    # way faster than 5s, but this should be robust against overloaded test
-    # runners.
-    timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
-    count = 0
-    while datetime.now(tz=timezone.utc) < timeout:
-        r = await client.get(f"/moneypenny/users/{username}")
-        assert r.status_code == 200
-        data = r.json()
-        if data["status"] == "active":
-            return
-        count += 1
-        await asyncio.sleep(log(count))
-    assert False, "Background thread still not finished after 5s"
+    r = await client.get(f"/moneypenny/users/{username}/wait")
+    assert r.status_code == 307
+    assert r.headers["Location"] == url_for(f"users/{username}")
+
+    r = await client.get(f"/moneypenny/users/{username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
 
 
 @pytest.mark.asyncio
@@ -66,7 +62,10 @@ async def test_route_index(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_route_commission(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
@@ -169,17 +168,24 @@ async def test_route_commission(
         )
     ]
 
-    await wait_for_completion(client, dossier.username, mock_kubernetes)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
 
 @pytest.mark.asyncio
 async def test_route_retire(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     """Retire is configured to not have any containers."""
     r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    await wait_for_completion(client, dossier.username, mock_kubernetes)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
     r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 200
@@ -200,7 +206,10 @@ async def test_route_retire(
 
 @pytest.mark.asyncio
 async def test_simultaneous_orders(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
@@ -213,12 +222,17 @@ async def test_simultaneous_orders(
     )
     assert r.status_code == 409
 
-    await wait_for_completion(client, dossier.username, mock_kubernetes)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
 
 @pytest.mark.asyncio
 async def test_repeated_orders(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
@@ -228,7 +242,9 @@ async def test_repeated_orders(
     data = r.json()
     assert data["status"] == "commissioning"
 
-    await wait_for_completion(client, dossier.username, mock_kubernetes)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
     # Since we've already seen this one, there should be no status change.
     r = await client.post("/moneypenny/users", json=dossier.dict())
@@ -250,7 +266,9 @@ async def test_repeated_orders(
     assert data["status"] == "commissioning"
     assert data["uid"] == new_dossier["uid"]
 
-    await wait_for_completion(client, dossier.username, mock_kubernetes)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
     r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 200

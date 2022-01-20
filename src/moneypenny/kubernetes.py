@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from kubernetes_asyncio import client
+from kubernetes_asyncio import client, watch
 from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1ConfigMapVolumeSource,
@@ -16,6 +16,7 @@ from kubernetes_asyncio.client import (
     V1Pod,
     V1PodSecurityContext,
     V1PodSpec,
+    V1PodStatus,
     V1Volume,
 )
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -84,15 +85,8 @@ class KubernetesClient:
     objects and models.  By hiding these obscure objects here it makes
     the code easier to mock and test.
 
-    The public API is just three methods: make_objects, delete_objects,
-    and check_pod_completed.
-
     All Exceptions raised are our own, although they may well be thin
     wrappers around the corresponding K8s API error.
-
-    This should normally be used inside an ``async with`` block so that the
-    client will automatically be cleaned up when no longer needed.  If not
-    used that way, `aclose` must be called when finished using the client.
     """
 
     def __init__(
@@ -175,45 +169,71 @@ class KubernetesClient:
         await self._configmap_delete(username)
         await self._pod_delete(username)
 
-    async def check_pod_completed(self, username: str) -> bool:
-        """Return true if the pod completed successfully, false if it
-        is pending or running, and raise an exception if any part of the
-        execution failed.
+    async def wait_for_pod(self, username: str) -> None:
+        """Wait for the pod for a user to complete.
 
         Parameters
         ----------
-        name: Username for the pod to check on.
-
-        Returns
-        -------
-        True for successful completion, False for still-in-progress.
+        username : `str`
+            Username of user whose pod to wait for.
 
         Raises
         ------
-        PodNotFound if the pod isn't there at all, OperationFailed if the pod
-        encountered an error, K8sApiException for some other Kubernetes error.
+        moneypenny.exceptions.PodNotFound
+            The user's pod is not there at all.
+        moneypenny.exceptions.OperationFailed
+            The pod failed.
+        moneypenny.exceptions.K8sApiException
+            Some other Kubernetes API failure.
         """
-        pname = _name_object(username, "pod")
-
+        pod_name = _name_object(username, "pod")
+        args = (self.v1.list_namespaced_pod, self.namespace)
+        kwargs = {"field_selector": f"metadata.name={pod_name}"}
         try:
-            pod = await self.v1.read_namespaced_pod(pname, self.namespace)
-            phase = pod.status.phase
-            message = pod.status.message
-        except ApiException as exc:
-            if exc.status == 404:
-                raise PodNotFound(f"Pod {pname} not found")
-            self.logger.exception("Error checking on pod completion")
-            raise K8sApiException(exc)
+            async with watch.Watch().stream(*args, **kwargs) as stream:
+                async for event in stream:
+                    status = event["object"].status
+                    msg = f"New status of {pod_name}: {status.phase}"
+                    self.logger.debug(msg)
+                    if self._is_pod_finished(pod_name, status):
+                        return
+        except ApiException as e:
+            if e.status == 404:
+                raise PodNotFound(f"Pod {pod_name} not found")
+            msg = "Error checking on {pod_name} pod completion"
+            self.logger.exception(msg)
+            raise K8sApiException(e)
 
-        if phase == "Succeeded":
+    def _is_pod_finished(self, name: str, status: V1PodStatus) -> bool:
+        """Return true if a pod is finished, false if it is still running.
+
+        Parameters
+        ----------
+        name : `str`
+            The name of the pod, for error reporting.
+        status : ``kubernetes_asyncio.client.V1PodStatus``
+            The status information for the pod.
+
+        Raises
+        ------
+        moneypenny.exceptions.PodNotFound
+            The user's pod is not there at all.
+        moneypenny.exceptions.OperationFailed
+            The pod failed.
+        moneypenny.exceptions.K8sApiException
+            Some other Kubernetes API failure.
+        """
+        if status.phase == "Succeeded":
             return True
-        elif phase in ("Pending", "Running"):
+        elif status.phase == "Unknown":
+            raise OperationFailed(f"Pod {name} in Unknown phase")
+        elif status.phase == "Failed":
+            raise OperationFailed(f"Pod {name} failed: {status.message}")
+        elif status.phase in ("Pending", "Running"):
             return False
-        elif phase == "Unknown":
-            raise OperationFailed(f"Pod {pname} in Unknown phase")
         else:
-            # phase == "Failed"
-            raise OperationFailed(f"Pod {pname} failed: {message}")
+            msg = f"Pod {name} has unknown phase {status.phase}"
+            raise OperationFailed(msg)
 
     def _make_pod(
         self,

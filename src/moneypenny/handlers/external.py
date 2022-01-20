@@ -1,5 +1,6 @@
 """Handlers for the app's external root, ``/moneypenny/``."""
 
+import asyncio
 from typing import Union
 from urllib.parse import urlparse
 
@@ -53,6 +54,16 @@ async def get_index(
     return Index(quip=moneypenny.quip().strip(), metadata=metadata)
 
 
+def _url_for_get_user(request: Request, username: str) -> str:
+    """Returns the URL for a user's status, fixing the scheme if needed."""
+    url = request.url_for("get_user", username=username)
+    if getattr(request.state, "forwarded_proto", None):
+        proto = request.state.forwarded_proto
+        return urlparse(url)._replace(scheme=proto).geturl()
+    else:
+        return url
+
+
 @external_router.post(
     "/users",
     description="Commission a new user.",
@@ -80,18 +91,13 @@ async def commission_user(
         # A container was created, so we redirect to the status URL and start
         # a background task to wait for it to complete and then clean it up.
         background_tasks.add_task(
-            moneypenny.wait_for_order,
+            moneypenny.manage_order,
             order=Order.COMMISSION,
             username=dossier.username,
         )
 
     # Redirect to the user's status page.
-    url = request.url_for("get_user", username=dossier.username)
-    if getattr(request.state, "forwarded_proto", None):
-        proto = request.state.forwarded_proto
-        return urlparse(url)._replace(scheme=proto).geturl()
-    else:
-        return url
+    return _url_for_get_user(request, dossier.username)
 
 
 @external_router.get("/users/{username}", summary="Status for user")
@@ -103,6 +109,31 @@ async def get_user(
         return status
     else:
         raise HTTPException(status_code=404, detail="Unknown user")
+
+
+@external_router.get(
+    "/users/{username}/wait",
+    response_class=RedirectResponse,
+    summary="Wait for order",
+)
+async def wait_for_order(
+    username: str,
+    request: Request,
+    moneypenny: Moneypenny = Depends(moneypenny_dependency),
+) -> str:
+    status = moneypenny.get_user_status(username)
+    if not status:
+        raise HTTPException(status_code=404, detail="Unknown user")
+    if status.status == Status.ACTIVE:
+        return _url_for_get_user(request, username)
+
+    # An order is indeed in progress.  Wait for it to finish.
+    try:
+        timeout = config.moneypenny_timeout
+        await asyncio.wait_for(moneypenny.wait_for_order(username), timeout)
+        return _url_for_get_user(request, username)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=500, detail="Order timed out")
 
 
 @external_router.post(
@@ -135,11 +166,8 @@ async def retire_user(
     # A container was created, so we redirect to the status URL and start a
     # background task to wait for it to complete and then clean it up.
     background_tasks.add_task(
-        moneypenny.wait_for_order, order=Order.RETIRE, username=username
+        moneypenny.manage_order, order=Order.RETIRE, username=username
     )
-    url = request.url_for("get_user", username=username)
-    if getattr(request.state, "forwarded_proto", None):
-        proto = request.state.forwarded_proto
-        return urlparse(url)._replace(scheme=proto).geturl()
-    else:
-        return url
+
+    # Redirect to the user's status page.
+    return _url_for_get_user(request, dossier.username)

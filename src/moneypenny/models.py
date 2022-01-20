@@ -90,3 +90,16 @@ class UserStatus(BaseModel):
     groups: List[Group] = Field(
         ..., title="Groups of user at last commissioning"
     )
+
+
+class PodStatus(Enum):
+    """Status of a pod.
+
+    This is essentially the same as V1PodCondition, but isolated from the
+    Kubernetes libraries.
+    """
+
+    PodScheduled = "PodScheduled"
+    ContainersReady = "ContainersReady"
+    Initialized = "Initialized"
+    Ready = "Ready"

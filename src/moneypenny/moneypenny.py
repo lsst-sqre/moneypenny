@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import random
-from math import log
 from typing import TYPE_CHECKING
 
 import yaml
@@ -156,7 +154,7 @@ class Moneypenny:
         )
         return True
 
-    async def wait_for_order(self, order: Order, username: str) -> None:
+    async def manage_order(self, order: Order, username: str) -> None:
         """Start a background task to wait for order completion.
 
         This is done instead of using FastAPI's ``BackgroundTasks`` directly
@@ -166,9 +164,9 @@ class Moneypenny:
         https://stackoverflow.com/questions/68542054/
         """
         loop = asyncio.get_event_loop()
-        loop.create_task(self._wait_for_order(order, username))
+        loop.create_task(self._manage_order(order, username))
 
-    async def _wait_for_order(self, order: Order, username: str) -> None:
+    async def _manage_order(self, order: Order, username: str) -> None:
         """Wait for an order to complete.
 
         This is the internal implementation of `wait_for_order`.  Wait for a
@@ -180,40 +178,35 @@ class Moneypenny:
         username : `str`
             The username whose pod we're waiting for.
         """
-        tmout = config.moneypenny_timeout
-        expiry = datetime.datetime.now() + datetime.timedelta(seconds=tmout)
-        msg = f"Awaiting completion of {order.value} for {username}"
-        self.logger.debug(msg)
-
-        # Wait until the commission is complete, an exception, or a timeout.
-        count = 0
-        finito = False
+        self.logger.debug(
+            f"Waiting for completion of order {order.value} for {username}"
+        )
+        timeout = config.moneypenny_timeout
+        success = False
         try:
-            while datetime.datetime.now() < expiry and not finito:
-                count += 1
-                await asyncio.sleep(int(log(count)))
-                self.logger.debug(f"Checking on {username}: attempt #{count}")
-                finito = await self.check_completed(username)
-        except Exception as exc:
-            msg = f"Order {order.value} for {username} failed: {exc}"
+            await asyncio.wait_for(
+                self.k8s_client.wait_for_pod(username), timeout
+            )
+        except asyncio.TimeoutError:
+            msg = (
+                f"Order {order.value} for {username} did not complete in"
+                f" {timeout}s"
+            )
             self.logger.error(msg)
+        except Exception:
+            self.logger.exception(f"Order {order.value} for {username} failed")
         else:
-            if not finito:
-                msg = (
-                    f"Order {order.value} for {username} did not complete in"
-                    f" {config.moneypenny_timeout}s"
-                )
-                self.logger.error(msg)
+            success = True
 
         # Clean up the Kubernetes resources and log the result.
-        completed_str = "completed" if finito else "failed"
+        completed_str = "completed" if success else "failed"
         msg = f"Order {order.value} {completed_str} for {username}: tiding up"
         self.logger.info(msg)
         try:
             await self.k8s_client.delete_objects(username)
-        except Exception as exc:
-            msg = f"Failed to tidy up for {order.value} for {username}: {exc}"
-            self.logger.error(msg)
+        except Exception:
+            msg = f"Failed to tidy up for {order.value} for {username}"
+            self.logger.exception(msg)
         else:
             msg = (
                 f"Tidied up after {order.value} for {username}; awaiting"
@@ -222,33 +215,13 @@ class Moneypenny:
             self.logger.info(msg)
 
         # Record the state change and log the timeout if relevant.
-        if finito:
+        if success:
             self.state.record_complete(username)
         else:
             self.state.record_failure(username)
 
-    async def check_completed(self, username: str) -> bool:
-        """Check on the completion status of an order's execution.
-
-        Parameters
-        ----------
-        username: name of user to check on
-
-        Returns
-        -------
-        True if the pod completed successfully, False if it has not completed.
-
-        Raises
-        ------
-        PodNotFound if the pod cannot be found at all,
-        ApiException if there was some other error
-
-        """
-        return await self.k8s_client.check_pod_completed(username)
-
     def get_user_status(self, username: str) -> Optional[UserStatus]:
         """Get the status of a user.
-
 
         Parameters
         ----------
@@ -261,3 +234,18 @@ class Moneypenny:
             Status of the user if they are known, otherwise `None`.
         """
         return self.state.get_user_status(username)
+
+    async def wait_for_order(self, username: str) -> None:
+        """Wait for the pod for a user to finish running.
+
+        Parameters
+        ----------
+        username : `str`
+            The user whose pod to wait for.
+
+        Raises
+        ------
+        KeyError
+            No pod for this user was ever started.
+        """
+        await self.state.wait_for_completion(username)

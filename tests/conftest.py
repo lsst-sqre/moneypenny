@@ -3,25 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import AsyncIterator, Iterator
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from httpx import AsyncClient
+from kubernetes_asyncio import watch
+from safir.testing.kubernetes import MockKubernetesApi, patch_kubernetes
 
 from moneypenny import main
 from moneypenny.config import config
 from moneypenny.dependencies import moneypenny_dependency
 from moneypenny.models import Dossier, Group
-from tests.support.constants import TEST_HOSTNAME
 
-if TYPE_CHECKING:
-    from typing import AsyncIterator, Iterator
-
-    from fastapi import FastAPI
-
-from safir.testing.kubernetes import MockKubernetesApi, patch_kubernetes
+from .support.constants import TEST_HOSTNAME
+from .support.kubernetes import MockKubernetesWatch
 
 
 @pytest_asyncio.fixture
@@ -69,6 +68,20 @@ def mock_kubernetes() -> Iterator[MockKubernetesApi]:
         The mock Kubernetes API object.
     """
     yield from patch_kubernetes()
+
+
+@pytest.fixture
+def mock_kubernetes_watch() -> Iterator[MockKubernetesWatch]:
+    """Replace the Kubernetes watch API with a mock class.
+
+    Returns
+    -------
+    mock_kubernetes_watch : `tests.support.kubernetes.MockKubernetesWatch`
+        The mock Kubernetes watch API object.
+    """
+    with patch.object(watch, "Watch") as mock_watch:
+        mock_watch.return_value = MockKubernetesWatch()
+        yield mock_watch.return_value
 
 
 @pytest.fixture

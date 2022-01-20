@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import Event
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -35,6 +36,7 @@ class State:
 
     def __init__(self) -> None:
         self._user_status: Dict[str, UserStatus] = {}
+        self._progress_event: Dict[str, Event] = {}
 
     def get_user_status(self, username: str) -> Optional[UserStatus]:
         """Get status for a user.
@@ -67,6 +69,7 @@ class State:
             groups=dossier.groups,
         )
         self._user_status[dossier.username] = status
+        self._progress_event[dossier.username] = Event()
 
     def record_retire_start(self, dossier: Dossier) -> None:
         """Record start of retiring a user.
@@ -84,6 +87,7 @@ class State:
             groups=dossier.groups,
         )
         self._user_status[dossier.username] = status
+        self._progress_event[dossier.username] = Event()
 
     def record_complete(self, username: str) -> None:
         """Record completion of commissioning or retiring of a user.
@@ -110,6 +114,7 @@ class State:
             user_status.status = Status.ACTIVE
         else:
             del self._user_status[username]
+        self._progress_event[username].set()
 
     def record_failure(self, username: str) -> None:
         """Record failure of commissioning or retiring a user.
@@ -124,7 +129,7 @@ class State:
         Raises
         ------
         KeyError
-            The user's status was not found (retiring was never started).
+            The user's status was not found.
         ValueError
             The user's status was in an invalid state, indicating that
             something has gone wrong internally with the ordering of
@@ -139,3 +144,19 @@ class State:
         else:
             user_status.status = Status.ACTIVE
         user_status.last_changed = datetime.now(tz=timezone.utc)
+        self._progress_event[username].set()
+
+    async def wait_for_completion(self, username: str) -> None:
+        """Wait for the pod for a user to finish running.
+
+        Parameters
+        ----------
+        username : `str`
+            The user whose pod to wait for.
+
+        Raises
+        ------
+        KeyError
+            No pod for this user was ever started.
+        """
+        await self._progress_event[username].wait()
