@@ -82,6 +82,12 @@ async def commission_user(
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
 ) -> Union[str, PlainTextResponse]:
     status = moneypenny.get_user_status(dossier.username)
+    if status and status.status == Status.COMMISSIONING:
+        if status.uid == dossier.uid and status.groups == dossier.groups:
+            # Commissioning is in progress, but is doing the same thing that
+            # was just requested, so we can redirect to the existing user
+            # status URL.
+            return _url_for_get_user(request, dossier.username)
     if status and status.status in (Status.COMMISSIONING, Status.RETIRING):
         msg = f"Orders for {dossier.username} are still in progress"
         raise HTTPException(status_code=409, detail=msg)

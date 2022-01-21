@@ -138,10 +138,8 @@ class Moneypenny:
         if not containers:
             self.logger.info("Empty order for {order.value}, nothing to do")
             if order == Order.COMMISSION:
-                self.state.record_commission_start(dossier)
                 self.state.record_complete(dossier.username)
             elif order == Order.RETIRE:
-                self.state.record_retire_start(dossier)
                 self.state.record_complete(dossier.username)
             return False
 

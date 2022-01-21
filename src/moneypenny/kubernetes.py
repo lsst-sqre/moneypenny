@@ -363,7 +363,7 @@ class KubernetesClient:
             )
         except ApiException as e:
             if e.status == 404:
-                self.logger.info(f"Configmap {cmname} already deleted")
+                self.logger.debug(f"Configmap {cmname} already deleted")
             else:
                 self.logger.exception("Exception deleting configmap")
                 raise K8sApiException(e)
@@ -378,7 +378,7 @@ class KubernetesClient:
             status = await self.v1.delete_namespaced_pod(pname, self.namespace)
         except ApiException as e:
             if e.status == 404:
-                self.logger.info(f"Pod {pname} already deleted")
+                self.logger.debug(f"Pod {pname} already deleted")
             else:
                 self.logger.exception("Exception deleting pod")
                 raise K8sApiException(e)

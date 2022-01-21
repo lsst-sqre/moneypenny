@@ -82,6 +82,12 @@ async def test_route_commission(
         "groups": [g.dict() for g in dossier.groups],
     }
 
+    # Requesting the exact same thing again even though it's not complete is
+    # fine and produces the same redirect.
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(f"users/{dossier.username}")
+
     assert mock_kubernetes.get_all_objects_for_test("ConfigMap") == [
         V1ConfigMap(
             metadata=V1ObjectMeta(
@@ -214,7 +220,9 @@ async def test_simultaneous_orders(
     r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
 
-    r = await client.post("/moneypenny/users", json=dossier.dict())
+    new_dossier = dossier.dict()
+    new_dossier["uid"] = dossier.uid + 1
+    r = await client.post("/moneypenny/users", json=new_dossier)
     assert r.status_code == 409
 
     r = await client.post(
