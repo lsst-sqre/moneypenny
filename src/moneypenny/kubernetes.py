@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -131,27 +132,51 @@ class KubernetesClient:
 
         await self.delete_objects(username)
 
-        self.logger.info(f"Creating configmap for {username}")
-        try:
-            status = await self.v1.create_namespaced_config_map(
-                self.namespace, dossier_cm
-            )
-        except ApiException as e:
-            self.logger.exception("Exception creating configmap")
-            raise K8sApiException(e)
-        self.logger.debug(f"Configmap for {username} created: {status}")
-        self.logger.info(f"Creating pod for {username}")
-        try:
-            status = await self.v1.create_namespaced_pod(self.namespace, pod)
-        except ApiException as e:
-            self.logger.exception("Exception creating pod")
+        count = 1
+        while True:
+            msg = f"Creating ConfigMap for {username} (try #{count})"
+            self.logger.info(msg)
             try:
-                await self._configmap_delete(username)
-            except K8sApiException:
-                msg = f"Failed to delete configmap for {username}"
+                status = await self.v1.create_namespaced_config_map(
+                    self.namespace, dossier_cm
+                )
+            except ApiException as e:
+                msg = f"Exception creating ConfigMap for {username}"
                 self.logger.exception(msg)
-            raise K8sApiException(e)
-        self.logger.debug(f"Pod for {username} created: {status}")
+                if count > 5:
+                    raise K8sApiException(e)
+                else:
+                    await asyncio.sleep(1)
+                    self.logger.info(f"Retrying ConfigMap for {username}")
+            else:
+                msg = f"ConfigMap for {username} created: {status}"
+                self.logger.debug(msg)
+                break
+            count += 1
+
+        count = 1
+        while True:
+            self.logger.info(f"Creating Pod for {username} (try #{count})")
+            try:
+                status = await self.v1.create_namespaced_pod(
+                    self.namespace, pod
+                )
+            except ApiException as e:
+                self.logger.exception(f"Exception creating Pod for {username}")
+                if count > 5:
+                    try:
+                        await self._configmap_delete(username)
+                    except K8sApiException:
+                        msg = f"Failed to delete ConfigMap for {username}"
+                        self.logger.exception(msg)
+                    raise K8sApiException(e)
+                else:
+                    await asyncio.sleep(1)
+                    self.logger.info(f"Retrying Pod for {username}")
+            else:
+                self.logger.debug(f"Pod for {username} created: {status}")
+                break
+            count += 1
 
     async def delete_objects(self, username: str) -> None:
         """Delete the Pod and ConfigMap for a user.

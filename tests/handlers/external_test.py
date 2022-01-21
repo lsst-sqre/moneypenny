@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import ANY
 
 import pytest
 from httpx import AsyncClient
 from kubernetes_asyncio.client import (
+    ApiException,
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1ObjectMeta,
@@ -283,3 +285,40 @@ async def test_repeated_orders(
     data = r.json()
     assert data["status"] == "active"
     assert data["uid"] == new_dossier["uid"]
+
+
+@pytest.mark.asyncio
+async def test_errors(
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
+) -> None:
+    """Test resource creation when Kubernetes calls fail."""
+    count = 0
+
+    def error_callback(method: str, *args: Any, **kwargs: Any) -> None:
+        nonlocal count
+        count += 1
+        if method == "create_namespaced_config_map" and count <= 1:
+            raise ApiException(status=409, reason="Resoure conflict")
+        elif method == "create_namespaced_config_map" and count <= 6:
+            raise ApiException(status=500, reason="Other error")
+        elif method == "create_namespaced_pod" and count <= 3:
+            raise ApiException(status=409, reason="Resource conflict")
+        elif method == "create_namespaced_pod" and count <= 4:
+            raise ApiException(status=500, reason="Other error")
+
+    mock_kubernetes.error_callback = error_callback
+
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
