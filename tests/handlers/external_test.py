@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from datetime import datetime, timedelta, timezone
-from math import log
-from typing import TYPE_CHECKING
+from typing import Any
 from unittest.mock import ANY
 
 import pytest
+from httpx import AsyncClient
 from kubernetes_asyncio.client import (
+    ApiException,
     V1ConfigMap,
     V1ConfigMapVolumeSource,
     V1ObjectMeta,
@@ -19,15 +18,12 @@ from kubernetes_asyncio.client import (
     V1PodStatus,
     V1Volume,
 )
+from safir.testing.kubernetes import MockKubernetesApi
 
-from tests.support.constants import TEST_HOSTNAME
-from tests.support.kubernetes import assert_kubernetes_objects_are
+from moneypenny.models import Dossier
 
-if TYPE_CHECKING:
-    from httpx import AsyncClient
-
-    from moneypenny.models import Dossier
-    from tests.support.kubernetes import MockKubernetesApi
+from ..support.constants import TEST_HOSTNAME
+from ..support.kubernetes import MockKubernetesWatch
 
 
 def url_for(partial_url: str) -> str:
@@ -36,24 +32,24 @@ def url_for(partial_url: str) -> str:
 
 
 async def wait_for_completion(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    username: str,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
-    pod_name = f"{dossier.username}-pod"
+    pod_name = f"{username}-pod"
     pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
     pod.status = V1PodStatus(phase="Succeeded")
+    await mock_kubernetes_watch.signal_change()
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code in (200, 404)
+    r = await client.get(f"/moneypenny/users/{username}/wait")
+    assert r.status_code == 307
+    assert r.headers["Location"] == url_for(f"users/{username}")
 
-    # Wait a bit for the background thread to run.  It will generally finish
-    # way faster than 5s, but this should be robust against overloaded test
-    # runners.
-    timeout = datetime.now(tz=timezone.utc) + timedelta(seconds=5)
-    count = 1
-    while r.status_code == 200 and datetime.now(tz=timezone.utc) < timeout:
-        await asyncio.sleep(log(count))
-        r = await client.get(f"/moneypenny/{dossier.username}")
-        assert r.status_code in (200, 404)
+    r = await client.get(f"/moneypenny/users/{username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
 
 
 @pytest.mark.asyncio
@@ -68,157 +64,261 @@ async def test_route_index(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_route_commission(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    assert r.headers["Location"] == url_for(dossier.username)
+    assert r.headers["Location"] == url_for(f"users/{dossier.username}")
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code == 202
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data == {
+        "username": dossier.username,
+        "status": "commissioning",
+        "last_changed": ANY,
+        "uid": dossier.uid,
+        "groups": [g.dict() for g in dossier.groups],
+    }
 
-    assert_kubernetes_objects_are(
-        mock_kubernetes,
-        "ConfigMap",
-        [
-            V1ConfigMap(
-                metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-cm",
-                    namespace="default",
-                    owner_references=[
-                        V1OwnerReference(
-                            api_version="v1",
-                            kind="Pod",
-                            name="moneypenny-78547dcf97-9xqq8",
-                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
-                        )
-                    ],
-                ),
-                data={
-                    "dossier.json": json.dumps(
-                        dossier.dict(), sort_keys=True, indent=4
+    # Requesting the exact same thing again even though it's not complete is
+    # fine and produces the same redirect.
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    assert r.headers["Location"] == url_for(f"users/{dossier.username}")
+
+    assert mock_kubernetes.get_all_objects_for_test("ConfigMap") == [
+        V1ConfigMap(
+            metadata=V1ObjectMeta(
+                name=f"{dossier.username}-cm",
+                namespace="default",
+                owner_references=[
+                    V1OwnerReference(
+                        api_version="v1",
+                        kind="Pod",
+                        name="moneypenny-78547dcf97-9xqq8",
+                        uid="00386592-214f-40c5-88e1-b9657d53a7c6",
                     )
-                },
-            )
-        ],
-    )
-    assert_kubernetes_objects_are(
-        mock_kubernetes,
-        "Pod",
-        [
-            V1Pod(
-                metadata=V1ObjectMeta(
-                    name=f"{dossier.username}-pod",
-                    namespace="default",
-                    owner_references=[
-                        V1OwnerReference(
-                            api_version="v1",
-                            kind="Pod",
-                            name="moneypenny-78547dcf97-9xqq8",
-                            uid="00386592-214f-40c5-88e1-b9657d53a7c6",
-                        )
-                    ],
-                ),
-                spec=V1PodSpec(
-                    automount_service_account_token=False,
-                    containers=[
-                        {
-                            "name": "farthing",
-                            "image": "lsstsqre/farthing",
-                            "securityContext": {
-                                "runAsUser": 1000,
-                                "runAsNonRootUser": True,
-                                "allowPrivilegeEscalation": False,
-                            },
-                            "volumeMounts": [
-                                {
-                                    "mountPath": "/homedirs",
-                                    "name": "homedirs",
-                                },
-                                {
-                                    "mountPath": "/opt/dossier",
-                                    "name": f"dossier-{dossier.username}-vol",
-                                    "readOnly": True,
-                                },
-                            ],
-                        }
-                    ],
-                    image_pull_secrets=[],
-                    init_containers=[],
-                    restart_policy="OnFailure",
-                    security_context=V1PodSecurityContext(
-                        run_as_group=1000, run_as_user=1000
-                    ),
-                    volumes=[
-                        {
-                            "name": "homedirs",
-                            "nfs": {
-                                "server": "10.10.10.10",
-                                "path": "/homedirs",
-                            },
+                ],
+            ),
+            data={
+                "dossier.json": json.dumps(
+                    dossier.dict(), sort_keys=True, indent=4
+                )
+            },
+        )
+    ]
+    assert mock_kubernetes.get_all_objects_for_test("Pod") == [
+        V1Pod(
+            metadata=V1ObjectMeta(
+                name=f"{dossier.username}-pod",
+                namespace="default",
+                owner_references=[
+                    V1OwnerReference(
+                        api_version="v1",
+                        kind="Pod",
+                        name="moneypenny-78547dcf97-9xqq8",
+                        uid="00386592-214f-40c5-88e1-b9657d53a7c6",
+                    )
+                ],
+            ),
+            spec=V1PodSpec(
+                automount_service_account_token=False,
+                containers=[
+                    {
+                        "name": "farthing",
+                        "image": "lsstsqre/farthing",
+                        "securityContext": {
+                            "runAsUser": 1000,
+                            "runAsNonRootUser": True,
+                            "allowPrivilegeEscalation": False,
                         },
-                        V1Volume(
-                            name=f"dossier-{dossier.username}-vol",
-                            config_map=V1ConfigMapVolumeSource(
-                                default_mode=0o644,
-                                name=f"{dossier.username}-cm",
-                            ),
-                        ),
-                    ],
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/homedirs",
+                                "name": "homedirs",
+                            },
+                            {
+                                "mountPath": "/opt/dossier",
+                                "name": f"dossier-{dossier.username}-vol",
+                                "readOnly": True,
+                            },
+                        ],
+                    }
+                ],
+                image_pull_secrets=[],
+                init_containers=[],
+                restart_policy="OnFailure",
+                security_context=V1PodSecurityContext(
+                    run_as_group=1000, run_as_user=1000
                 ),
-                status=V1PodStatus(phase="Running"),
-            )
-        ],
+                volumes=[
+                    {
+                        "name": "homedirs",
+                        "nfs": {
+                            "server": "10.10.10.10",
+                            "path": "/homedirs",
+                        },
+                    },
+                    V1Volume(
+                        name=f"dossier-{dossier.username}-vol",
+                        config_map=V1ConfigMapVolumeSource(
+                            default_mode=0o644,
+                            name=f"{dossier.username}-cm",
+                        ),
+                    ),
+                ],
+            ),
+            status=V1PodStatus(phase="Running"),
+        )
+    ]
+
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
     )
-
-    r = await client.get(f"/moneypenny/{dossier.username}")
-    assert r.status_code == 202
-
-    await wait_for_completion(client, dossier, mock_kubernetes)
 
 
 @pytest.mark.asyncio
 async def test_route_retire(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
     """Retire is configured to not have any containers."""
-    r = await client.post("/moneypenny/retire", json=dossier.dict())
-    assert r.status_code == 200
-    assert "Nothing to do" in r.text
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
-    r = await client.get(f"/moneypenny/{dossier.username}")
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+
+    r = await client.post(
+        f"/moneypenny/users/{dossier.username}/retire", json=dossier.dict()
+    )
+    assert r.status_code == 204
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 404
 
-    assert_kubernetes_objects_are(mock_kubernetes, "ConfigMap", [])
-    assert_kubernetes_objects_are(mock_kubernetes, "Pod", [])
+    assert mock_kubernetes.get_all_objects_for_test("ConfigMap") == []
+    assert mock_kubernetes.get_all_objects_for_test("Pod") == []
 
 
 @pytest.mark.asyncio
 async def test_simultaneous_orders(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    assert r.headers["Location"] == url_for(dossier.username)
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+
+    new_dossier = dossier.dict()
+    new_dossier["uid"] = dossier.uid + 1
+    r = await client.post("/moneypenny/users", json=new_dossier)
     assert r.status_code == 409
 
-    pod_name = f"{dossier.username}-pod"
-    pod = await mock_kubernetes.read_namespaced_pod(pod_name, "default")
-    pod.status = V1PodStatus(phase="Succeeded")
+    r = await client.post(
+        f"/moneypenny/users/{dossier.username}/retire", json=dossier.dict()
+    )
+    assert r.status_code == 409
 
-    while r.status_code != 404:
-        r = await client.get(f"/moneypenny/{dossier.username}")
-        await asyncio.sleep(0.5)
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
 
 
 @pytest.mark.asyncio
 async def test_repeated_orders(
-    client: AsyncClient, dossier: Dossier, mock_kubernetes: MockKubernetesApi
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
 ) -> None:
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+    r = await client.post("/moneypenny/users", json=dossier.dict())
     assert r.status_code == 303
-    await wait_for_completion(client, dossier, mock_kubernetes)
-    # Since we've already seen this one, we should get an immediate 200 back.
-    r = await client.post("/moneypenny/commission", json=dossier.dict())
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
     assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
+
+    # Since we've already seen this one, there should be no status change.
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+
+    # But if we change something about the dossier, we should go through
+    # commissioning again.
+    new_dossier = dossier.dict()
+    new_dossier["uid"] = dossier.uid + 1
+    r = await client.post("/moneypenny/users", json=new_dossier)
+    assert r.status_code == 303
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+    assert data["uid"] == new_dossier["uid"]
+
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "active"
+    assert data["uid"] == new_dossier["uid"]
+
+
+@pytest.mark.asyncio
+async def test_errors(
+    client: AsyncClient,
+    dossier: Dossier,
+    mock_kubernetes: MockKubernetesApi,
+    mock_kubernetes_watch: MockKubernetesWatch,
+) -> None:
+    """Test resource creation when Kubernetes calls fail."""
+    count = 0
+
+    def error_callback(method: str, *args: Any, **kwargs: Any) -> None:
+        nonlocal count
+        count += 1
+        if method == "create_namespaced_config_map" and count <= 1:
+            raise ApiException(status=409, reason="Resoure conflict")
+        elif method == "create_namespaced_config_map" and count <= 6:
+            raise ApiException(status=500, reason="Other error")
+        elif method == "create_namespaced_pod" and count <= 3:
+            raise ApiException(status=409, reason="Resource conflict")
+        elif method == "create_namespaced_pod" and count <= 4:
+            raise ApiException(status=500, reason="Other error")
+
+    mock_kubernetes.error_callback = error_callback
+
+    r = await client.post("/moneypenny/users", json=dossier.dict())
+    assert r.status_code == 303
+
+    r = await client.get(f"/moneypenny/users/{dossier.username}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "commissioning"
+
+    await wait_for_completion(
+        client, dossier.username, mock_kubernetes, mock_kubernetes_watch
+    )

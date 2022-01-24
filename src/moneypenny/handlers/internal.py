@@ -8,13 +8,10 @@ These handlers should be used for monitoring, health checks, internal status,
 or other information that should not be visible outside the Kubernetes cluster.
 """
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter
 from safir.metadata import Metadata, get_metadata
 
 from ..config import config
-from ..dependencies import moneypenny_dependency
-from ..moneypenny import Moneypenny
 
 __all__ = ["get_index", "internal_router"]
 
@@ -42,17 +39,3 @@ async def get_index() -> Metadata:
         package_name="moneypenny",
         application_name=config.name,
     )
-
-
-@internal_router.delete(
-    "/cache",
-    description="Clear Moneypenny's internal cache.",
-    responses={200: {"description": "Cache has been cleared."}},
-    response_class=PlainTextResponse,
-    summary="Clear cache",
-)
-async def clear_cache(
-    moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> PlainTextResponse:
-    await moneypenny_dependency.clear_cache()
-    return PlainTextResponse("Cache cleared")

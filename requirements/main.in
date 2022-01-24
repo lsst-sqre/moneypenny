@@ -13,4 +13,4 @@ uvicorn[standard]
 # Other dependencies.
 click
 kubernetes_asyncio
-safir
+safir[kubernetes]

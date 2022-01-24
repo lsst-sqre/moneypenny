@@ -1,5 +1,6 @@
 """Handlers for the app's external root, ``/moneypenny/``."""
 
+import asyncio
 from typing import Union
 from urllib.parse import urlparse
 
@@ -16,8 +17,7 @@ from safir.metadata import get_metadata
 
 from ..config import config
 from ..dependencies import moneypenny_dependency
-from ..exceptions import K8sApiException, PodNotFound
-from ..models import Dossier, Index
+from ..models import Dossier, Index, Order, Status, UserStatus
 from ..moneypenny import Moneypenny
 
 __all__ = ["get_index", "external_router"]
@@ -54,123 +54,126 @@ async def get_index(
     return Index(quip=moneypenny.quip().strip(), metadata=metadata)
 
 
-@external_router.get(
-    "/{username}",
-    description=(
-        "Because Moneypenny tidies up rather quickly, 200 and 202 are"
-        " unlikely and 404 is common after successful execution."
-    ),
-    responses={
-        200: {"description": "Pod for this user has run successfully"},
-        202: {"description": "Pod for this user is currently running"},
-        404: {"description": "No pod found for this user"},
-    },
-    response_class=PlainTextResponse,
-    summary="Status for user",
-)
-async def get_user(
-    username: str,
-    response: Response,
-    moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> str:
-    try:
-        completed = await moneypenny.check_completed(username)
-        if completed:
-            return f"Pod for {username} succeeded"
-        else:
-            response.status_code = 202
-            return f"Pod for {username} is running"
-    except PodNotFound as exc:
-        response.status_code = 404
-        return str(exc)
-    except K8sApiException as exc:
-        response.status_code = 500
-        return str(exc)
-
-
-async def _check_conflict(username: str, moneypenny: Moneypenny) -> None:
-    """Check if processing is already in progress for this user.
-
-    Raises
-    ------
-    fastapi.HTTPException
-        Exception with a 409 error if processing is already in progress for
-        this user.
-    """
-    try:
-        completed = await moneypenny.check_completed(username)
-        if not completed:
-            msg = f"Orders for {username} are still in progress"
-            raise HTTPException(status_code=409, detail=msg)
-    except PodNotFound:
-        pass
+def _url_for_get_user(request: Request, username: str) -> str:
+    """Returns the URL for a user's status, fixing the scheme if needed."""
+    url = request.url_for("get_user", username=username)
+    if getattr(request.state, "forwarded_proto", None):
+        proto = request.state.forwarded_proto
+        return urlparse(url)._replace(scheme=proto).geturl()
+    else:
+        return url
 
 
 @external_router.post(
-    "/commission",
-    description="Perform provisioning steps with the details from the body",
+    "/users",
+    description="Commission a new user.",
     response_class=RedirectResponse,
     responses={
-        409: {"description": "Commissioning for user already in progress"},
+        303: {"description": "User commission started"},
+        409: {"description": "Order for user still in progress"},
     },
     status_code=303,
     summary="Provision user",
 )
-async def post_commission(
+async def commission_user(
     dossier: Dossier,
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
 ) -> Union[str, PlainTextResponse]:
-    await _check_conflict(dossier.username, moneypenny)
-    created = await moneypenny.dispatch_order("commission", dossier)
-    if not created:
-        return PlainTextResponse("Nothing to do")
+    status = moneypenny.get_user_status(dossier.username)
+    if status and status.status == Status.COMMISSIONING:
+        if status.uid == dossier.uid and status.groups == dossier.groups:
+            # Commissioning is in progress, but is doing the same thing that
+            # was just requested, so we can redirect to the existing user
+            # status URL.
+            return _url_for_get_user(request, dossier.username)
+    if status and status.status in (Status.COMMISSIONING, Status.RETIRING):
+        msg = f"Orders for {dossier.username} are still in progress"
+        raise HTTPException(status_code=409, detail=msg)
 
-    # A container was created, so we redirect to the status URL and start a
-    # background task to wait for it to complete and then clean it up.
-    background_tasks.add_task(
-        moneypenny.wait_for_order, action="commission", dossier=dossier
-    )
-    url = request.url_for("get_user", username=dossier.username)
-    if getattr(request.state, "forwarded_proto", None):
-        proto = request.state.forwarded_proto
-        return urlparse(url)._replace(scheme=proto).geturl()
+    created = await moneypenny.dispatch_order(Order.COMMISSION, dossier)
+    if created:
+        # A container was created, so we redirect to the status URL and start
+        # a background task to wait for it to complete and then clean it up.
+        background_tasks.add_task(
+            moneypenny.manage_order,
+            order=Order.COMMISSION,
+            username=dossier.username,
+        )
+
+    # Redirect to the user's status page.
+    return _url_for_get_user(request, dossier.username)
+
+
+@external_router.get("/users/{username}", summary="Status for user")
+async def get_user(
+    username: str, moneypenny: Moneypenny = Depends(moneypenny_dependency)
+) -> UserStatus:
+    status = moneypenny.get_user_status(username)
+    if status:
+        return status
     else:
-        return url
+        raise HTTPException(status_code=404, detail="Unknown user")
+
+
+@external_router.get(
+    "/users/{username}/wait",
+    response_class=RedirectResponse,
+    summary="Wait for order",
+)
+async def wait_for_order(
+    username: str,
+    request: Request,
+    moneypenny: Moneypenny = Depends(moneypenny_dependency),
+) -> str:
+    status = moneypenny.get_user_status(username)
+    if not status:
+        raise HTTPException(status_code=404, detail="Unknown user")
+    if status.status == Status.ACTIVE:
+        return _url_for_get_user(request, username)
+
+    # An order is indeed in progress.  Wait for it to finish.
+    try:
+        timeout = config.moneypenny_timeout
+        await asyncio.wait_for(moneypenny.wait_for_order(username), timeout)
+        return _url_for_get_user(request, username)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=500, detail="Order timed out")
 
 
 @external_router.post(
-    "/retire",
-    description="Perform deprovisioning steps with the details from the body",
+    "/users/{username}/retire",
     response_class=RedirectResponse,
     responses={
-        409: {"description": "Dossiering for user already in progress"},
+        204: {"description": "User retired"},
+        303: {"description": "User retirement started"},
+        409: {"description": "Order for user still in progress"},
     },
     status_code=303,
-    summary="Deprovision user",
+    summary="Retire user",
 )
-async def post_retire(
+async def retire_user(
+    username: str,
     dossier: Dossier,
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> Union[str, PlainTextResponse]:
-    await _check_conflict(dossier.username, moneypenny)
-    created = await moneypenny.dispatch_order("retire", dossier)
+) -> Union[Response, str]:
+    status = moneypenny.get_user_status(username)
+    if status and status.status in (Status.COMMISSIONING, Status.RETIRING):
+        msg = f"Orders for {username} are still in progress"
+        raise HTTPException(status_code=409, detail=msg)
+
+    created = await moneypenny.dispatch_order(Order.RETIRE, dossier)
     if not created:
-        return PlainTextResponse("Nothing to do")
+        return Response(status_code=204)
 
     # A container was created, so we redirect to the status URL and start a
     # background task to wait for it to complete and then clean it up.
     background_tasks.add_task(
-        moneypenny.wait_for_order,
-        action="retire",
-        username=dossier.username,
+        moneypenny.manage_order, order=Order.RETIRE, username=username
     )
-    url = request.url_for("get_user", username=dossier.username)
-    if getattr(request.state, "forwarded_proto", None):
-        proto = request.state.forwarded_proto
-        return urlparse(url)._replace(scheme=proto).geturl()
-    else:
-        return url
+
+    # Redirect to the user's status page.
+    return _url_for_get_user(request, dossier.username)

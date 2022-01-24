@@ -3,28 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, Mock, patch
+from typing import AsyncIterator, Iterator
+from unittest.mock import patch
 
-import kubernetes_asyncio
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from httpx import AsyncClient
-from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio import watch
+from safir.testing.kubernetes import MockKubernetesApi, patch_kubernetes
 
-import moneypenny.kubernetes
 from moneypenny import main
 from moneypenny.config import config
 from moneypenny.dependencies import moneypenny_dependency
 from moneypenny.models import Dossier, Group
-from tests.support.constants import TEST_HOSTNAME
-from tests.support.kubernetes import MockKubernetesApi
 
-if TYPE_CHECKING:
-    from typing import AsyncIterator, Iterator
-
-    from fastapi import FastAPI
+from .support.constants import TEST_HOSTNAME
+from .support.kubernetes import MockKubernetesWatch
 
 
 @pytest_asyncio.fixture
@@ -41,7 +37,7 @@ async def app(
     config.quips = str(assets_path / "quips.txt")
     config.moneypenny_timeout = 5
     async with LifespanManager(main.app):
-        await moneypenny_dependency.clear_cache()
+        await moneypenny_dependency.clear_state()
         yield main.app
 
 
@@ -62,7 +58,33 @@ def dossier() -> Dossier:
     )
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
+def mock_kubernetes() -> Iterator[MockKubernetesApi]:
+    """Replace the Kubernetes API with a mock class.
+
+    Returns
+    -------
+    mock_kubernetes : `safir.testing.kubernetes.MockKubernetesApi`
+        The mock Kubernetes API object.
+    """
+    yield from patch_kubernetes()
+
+
+@pytest.fixture
+def mock_kubernetes_watch() -> Iterator[MockKubernetesWatch]:
+    """Replace the Kubernetes watch API with a mock class.
+
+    Returns
+    -------
+    mock_kubernetes_watch : `tests.support.kubernetes.MockKubernetesWatch`
+        The mock Kubernetes watch API object.
+    """
+    with patch.object(watch, "Watch") as mock_watch:
+        mock_watch.return_value = MockKubernetesWatch()
+        yield mock_watch.return_value
+
+
+@pytest.fixture
 def podinfo(tmp_path: Path) -> Iterator[Path]:
     """Store some mock Kubernetes pod information and override config."""
     orig_podinfo_dir = config.podinfo_dir
@@ -73,16 +95,3 @@ def podinfo(tmp_path: Path) -> Iterator[Path]:
     config.podinfo_dir = str(podinfo_dir)
     yield podinfo_dir
     config.podinfo_dir = orig_podinfo_dir
-
-
-@pytest_asyncio.fixture
-def mock_kubernetes() -> Iterator[MockKubernetesApi]:
-    """Replace the Kubernetes API with a mock class."""
-    mock_api = MockKubernetesApi()
-    with patch.object(moneypenny.kubernetes, "CoreV1Api") as mock_class:
-        mock_class.return_value = mock_api
-        with patch.object(moneypenny.kubernetes, "ApiClient") as mock_client:
-            mock_client.return_value = MagicMock(spec=ApiClient)
-            with patch.object(kubernetes_asyncio, "config") as mock_config:
-                mock_config.load_incluster_config = Mock()
-                yield mock_api
