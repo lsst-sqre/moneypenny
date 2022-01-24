@@ -57,4 +57,8 @@ class MockKubernetesWatch:
         yield MockKubernetesStream(self.queue, api_call, args, kwargs)
 
     async def signal_change(self) -> None:
+        # This is a dummy value that's never used, so it doesn't matter what
+        # we put into the queue.  We just want the wake-up semantics of a
+        # queue, namely that each time we poke the queue the generator thread
+        # wakes up, and we can do this repeatedly.
         await self.queue.put("")
