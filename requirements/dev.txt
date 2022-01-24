@@ -114,9 +114,9 @@ httpx==0.21.3 \
     # via
     #   -c requirements/main.txt
     #   -r requirements/dev.in
-identify==2.4.4 \
-    --hash=sha256:6b4b5031f69c48bf93a646b90de9b381c6b5f560df4cbe0ed3cf7650ae741e4d \
-    --hash=sha256:aa68609c7454dbcaae60a01ff6b8df1de9b39fe6e50b1f6107ec81dcda624aa6
+identify==2.4.5 \
+    --hash=sha256:d11469ff952a4d7fd7f9be520d335dc450f585d474b39b5dfb86a500831ab6c7 \
+    --hash=sha256:d27d10099844741c277b45d809bd452db0d70a9b41ea3cd93799ebbbcc6dcb29
     # via pre-commit
 idna==3.3 \
     --hash=sha256:84d9dd047ffa80596e0f246e2eab0b391788b0503584e8945f2368256d2735ff \
@@ -171,17 +171,17 @@ pluggy==1.0.0 \
     --hash=sha256:4224373bacce55f955a878bf9cfa763c1e360858e330072059e10bad68531159 \
     --hash=sha256:74134bbf457f031a36d68416e1509f34bd5ccc019f0bcc952c7b909d06b37bd3
     # via pytest
-pre-commit==2.16.0 \
-    --hash=sha256:758d1dc9b62c2ed8881585c254976d66eae0889919ab9b859064fc2fe3c7743e \
-    --hash=sha256:fe9897cac830aa7164dbd02a4e7b90cae49630451ce88464bca73db486ba9f65
+pre-commit==2.17.0 \
+    --hash=sha256:725fa7459782d7bec5ead072810e47351de01709be838c2ce1726b9591dad616 \
+    --hash=sha256:c1a8040ff15ad3d648c70cc3e55b93e4d2d5b687320955505587fd79bbaed06a
     # via -r requirements/dev.in
 py==1.11.0 \
     --hash=sha256:51c75c4126074b472f746a24399ad32f6053d1b34b68d2fa41e558e6f4a98719 \
     --hash=sha256:607c53218732647dff4acdfcd50cb62615cedf612e72d1724fb1a0cc6405b378
     # via pytest
-pyparsing==3.0.6 \
-    --hash=sha256:04ff808a5b90911829c55c4e26f75fa5ca8a2f5f36aa3a51f68e27033341d3e4 \
-    --hash=sha256:d9bdec0013ef1eb5a84ab39a3b3868911598afa494f5faa038647101504e2b81
+pyparsing==3.0.7 \
+    --hash=sha256:18ee9022775d270c55187733956460083db60b37d0d0fb357445f3094eed3eea \
+    --hash=sha256:a6c06a88f252e6c322f65faf8f418b16213b51bdfaece0524c1c1bc30c63c484
     # via packaging
 pytest==6.2.5 \
     --hash=sha256:131b36680866a76e6781d13f101efb86cf674ebb9762eb70d3082b6f29889e89 \
@@ -278,7 +278,6 @@ typing-extensions==4.0.1 \
     # via
     #   -c requirements/main.txt
     #   mypy
-    #   pytest-asyncio
 virtualenv==20.13.0 \
     --hash=sha256:339f16c4a86b44240ba7223d0f93a7887c3ca04b5f9c8129da7958447d079b09 \
     --hash=sha256:d8458cf8d59d0ea495ad9b34c2599487f8a7772d796f9910858376d1600dd2dd
