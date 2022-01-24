@@ -198,7 +198,7 @@ class Moneypenny:
 
         # Clean up the Kubernetes resources and log the result.
         completed_str = "completed" if success else "failed"
-        msg = f"Order {order.value} {completed_str} for {username}: tiding up"
+        msg = f"Order {order.value} {completed_str} for {username}: tidying up"
         self.logger.info(msg)
         try:
             await self.k8s_client.delete_objects(username)
