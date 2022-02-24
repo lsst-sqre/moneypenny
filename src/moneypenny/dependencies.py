@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import Depends
 from kubernetes_asyncio import client
-from safir.dependencies.logger import logger_dependency
+from safir.dependencies.gafaelfawr import auth_logger_dependency
 from safir.kubernetes import initialize_kubernetes
 from structlog.stdlib import BoundLogger
 
@@ -21,7 +21,7 @@ class MoneypennyDependency:
         self._state: State = State()
 
     async def __call__(
-        self, logger: BoundLogger = Depends(logger_dependency)
+        self, logger: BoundLogger = Depends(auth_logger_dependency)
     ) -> Moneypenny:
         assert self._api_client, "moneypenny_dependency is not initialized"
         k8s_client = KubernetesClient(self._api_client, logger)
