@@ -114,15 +114,15 @@ charset-normalizer==2.0.12 \
     # via
     #   aiohttp
     #   httpx
-click==8.0.4 \
-    --hash=sha256:6a7a62563bbfabfda3a38f3023a1db4a35978c0abd76f6c9605ecd6554d6d9b1 \
-    --hash=sha256:8458d7b1287c5fb128c90e23381cf99dcde74beaf6c7ff6384ce84d6fe090adb
+click==8.1.2 \
+    --hash=sha256:24e1a4a9ec5bf6299411369b208c1df2188d9eb8d916302fe6bf03faed227f1e \
+    --hash=sha256:479707fe14d9ec9a0757618b7a100a0ae4c4e236fac5b7f80ca68028141a1a72
     # via
     #   -r requirements/main.in
     #   uvicorn
-fastapi==0.75.0 \
-    --hash=sha256:124774ce4cb3322841965f559669b233a0b8d343ea24fdd8b293253c077220d7 \
-    --hash=sha256:43d12891b78fc497a50623e9c7c24640c569489f060acd9ce2c4902080487a93
+fastapi==0.75.1 \
+    --hash=sha256:8b62bde916d657803fb60fffe88e2b2c9fb854583784607e4347681cae20ad01 \
+    --hash=sha256:f46f8fc81261c2bd956584114da9da98c84e2410c807bc2487532dabf55e7ab8
     # via
     #   -r requirements/main.in
     #   safir
@@ -246,8 +246,8 @@ idna==3.3 \
     #   anyio
     #   rfc3986
     #   yarl
-kubernetes-asyncio==22.6.1 \
-    --hash=sha256:91a2f4c1cfc0cd1fe5ef8a5f3f24da20b4e8a93e28d6ce9b985df2b686c1edb5
+kubernetes-asyncio==22.6.2 \
+    --hash=sha256:ff1cb985a640aa7908c52fca098f32d2f3fd7d46f4725603f53864693b185c04
     # via
     #   -r requirements/main.in
     #   safir
@@ -460,9 +460,9 @@ uvloop==0.16.0 \
     --hash=sha256:e814ac2c6f9daf4c36eb8e85266859f42174a4ff0d71b99405ed559257750382 \
     --hash=sha256:f74bc20c7b67d1c27c72601c78cf95be99d5c2cdd4514502b4f3eb0933ff1228
     # via uvicorn
-watchgod==0.8.1 \
-    --hash=sha256:4ba20c2fa3e63df706ab50e694b9453b05395fadb7cbbfd984d71fb1547d485d \
-    --hash=sha256:c12d15f3df7d11e740704e45398277f75f1d78f46ad59ca9d7505bfd8b8d3086
+watchgod==0.8.2 \
+    --hash=sha256:2f3e8137d98f493ff58af54ea00f4d1433a6afe2ed08ab331a657df468c6bfce \
+    --hash=sha256:cb11ff66657befba94d828e3b622d5fb76f22fbda1376f355f3e6e51e97d9450
     # via uvicorn
 websockets==10.2 \
     --hash=sha256:038afef2a05893578d10dadbdbb5f112bd115c46347e1efe99f6a356ff062138 \
