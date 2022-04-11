@@ -246,8 +246,8 @@ idna==3.3 \
     #   anyio
     #   rfc3986
     #   yarl
-kubernetes-asyncio==22.6.2 \
-    --hash=sha256:ff1cb985a640aa7908c52fca098f32d2f3fd7d46f4725603f53864693b185c04
+kubernetes-asyncio==22.6.4 \
+    --hash=sha256:b372ccdac9ddda157da1d1368c6ad43c2fa05249721522d5f07873f245410e00
     # via
     #   -r requirements/main.in
     #   safir
