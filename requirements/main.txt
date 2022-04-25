@@ -247,6 +247,7 @@ idna==3.3 \
     #   rfc3986
     #   yarl
 kubernetes-asyncio==22.6.4 \
+    --hash=sha256:a552211c72c7452999d7bf3b09326a0557899d749b001743aa63f7fc3fcbcb2c \
     --hash=sha256:b372ccdac9ddda157da1d1368c6ad43c2fa05249721522d5f07873f245410e00
     # via
     #   -r requirements/main.in
