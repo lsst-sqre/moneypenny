@@ -7,7 +7,7 @@ constructed when this module is loaded and is not deferred until a function is
 called.
 """
 
-from importlib.metadata import metadata
+from importlib.metadata import metadata, version
 
 import structlog
 from fastapi import FastAPI
@@ -36,8 +36,8 @@ app = FastAPI()
 # interface definition and documentation URLs under the external URL.
 _subapp = FastAPI(
     title="moneypenny",
-    description=metadata("moneypenny").get("Summary", ""),
-    version=metadata("moneypenny").get("Version", "0.0.0"),
+    description=metadata("moneypenny")["Summary"],
+    version=version("moneypenny"),
 )
 _subapp.include_router(external_router)
 
