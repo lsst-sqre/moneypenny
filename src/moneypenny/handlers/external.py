@@ -1,7 +1,6 @@
 """Handlers for the app's external root, ``/moneypenny/``."""
 
 import asyncio
-from typing import Union
 from urllib.parse import urlparse
 
 from fastapi import (
@@ -12,7 +11,7 @@ from fastapi import (
     Request,
     Response,
 )
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from safir.metadata import get_metadata
 
 from ..config import config
@@ -80,7 +79,7 @@ async def commission_user(
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> Union[str, PlainTextResponse]:
+) -> str:
     status = moneypenny.get_user_status(dossier.username)
     if status and status.status == Status.COMMISSIONING:
         if status.uid == dossier.uid and status.groups == dossier.groups:
@@ -159,7 +158,7 @@ async def retire_user(
     request: Request,
     background_tasks: BackgroundTasks,
     moneypenny: Moneypenny = Depends(moneypenny_dependency),
-) -> Union[Response, str]:
+) -> Response:
     status = moneypenny.get_user_status(username)
     if status and status.status in (Status.COMMISSIONING, Status.RETIRING):
         msg = f"Orders for {username} are still in progress"
@@ -176,4 +175,5 @@ async def retire_user(
     )
 
     # Redirect to the user's status page.
-    return _url_for_get_user(request, dossier.username)
+    redirect_url = _url_for_get_user(request, dossier.username)
+    return RedirectResponse(redirect_url)
